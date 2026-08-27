@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "description": "Golden multi-turn dialogues for learn-skills chatbot follow-up and card resolution.",
+  "cases": [
+    {
+      "id": "gd-bookmarks-second-card",
+      "description": "Bookmarks list, then ask about the second card.",
+      "steps": [
+        {
+          "user": "Zeig mir meine Merkliste",
+          "expectIntent": "bookmarks"
+        },
+        {
+          "user": "Erzähl mir mehr zur zweiten",
+          "expectIntent": "course_details",
+          "expectCardKindAtIndex": { "index": 1, "kind": "course" }
+        }
+      ]
+    },
+    {
+      "id": "gd-profile-kurse-dazu",
+      "description": "Profile detail, then 'Kurse dazu' must keep the active profile.",
+      "steps": [
+        {
+          "user": "Zeig mir das Profil Data Analyst",
+          "expectIntent": "profile_details"
+        },
+        {
+          "user": "Kurse dazu",
+          "expectIntent": "profile_courses",
+          "expectActiveProfileKept": true
+        }
+      ]
+    },
+    {
+      "id": "gd-course-weitere-kurse",
+      "description": "Course detail, then ask for further courses on the topic.",
+      "steps": [
+        {
+          "user": "Was ist der Kurs Power BI Foundations?",
+          "expectIntent": "course_details"
+        },
+        {
+          "user": "Zeig mir weitere Kurse zu dem Thema",
+          "expectIntent": "course_search"
+        }
+      ]
+    },
+    {
+      "id": "gd-positional-collection",
+      "description": "Collections overview, then open the second collection by position.",
+      "steps": [
+        {
+          "user": "Welche Lernsammlungen gibt es?",
+          "expectIntent": "collections"
+        },
+        {
+          "user": "Öffne die zweite",
+          "expectIntent": "collections",
+          "expectCardKindAtIndex": { "index": 1, "kind": "collection" }
+        }
+      ]
+    },
+    {
+      "id": "gd-mixed-cards",
+      "description": "Mixed course and profile cards; positional follow-up uses addressable order only.",
+      "steps": [
+        {
+          "user": "Suche etwas zu SQL",
+          "expectIntent": "course_search"
+        },
+        {
+          "user": "Nimm die erste Karte",
+          "expectIntent": "course_details",
+          "expectCardKindAtIndex": { "index": 0, "kind": "course" }
+        }
+      ]
+    },
+    {
+      "id": "gd-clarify-missing-position",
+      "description": "Ambiguous follow-up without ordinal or active entity should clarify.",
+      "steps": [
+        {
+          "user": "Zeig mir Kurse zu Python",
+          "expectIntent": "course_search"
+        },
+        {
+          "user": "Erzähl mir mehr dazu",
+          "expectIntent": "clarify"
+        }
+      ]
+    }
+  ]
+}
