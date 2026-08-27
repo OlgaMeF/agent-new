@@ -6,7 +6,7 @@ namespace MB.ComTools.Apps.Content.Services;
 
 /// <summary>
 /// OpenAI-compatible chat client. Supports plain completions and native tool calling
-/// (<c>tools</c> / <c>tool_calls</c>) used by the agent router.
+/// (<c>tools</c> / <c>tool_call</c> or <c>tool_calls</c>) used by the agent router.
 /// </summary>
 public class GenAiService
 {
@@ -293,6 +293,27 @@ public class GenAiService
                 }
 
                 toolCalls.Add(parsed);
+            }
+        }
+
+        // Some gateways emit a singular tool_call object or one-element array.
+        if (toolCalls.Count == 0
+            && message.TryGetProperty("tool_call", out var toolCallElement))
+        {
+            if (toolCallElement.ValueKind == JsonValueKind.Object
+                && TryParseToolCall(toolCallElement, out var singular))
+            {
+                toolCalls.Add(singular);
+            }
+            else if (toolCallElement.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var call in toolCallElement.EnumerateArray())
+                {
+                    if (TryParseToolCall(call, out var parsed))
+                    {
+                        toolCalls.Add(parsed);
+                    }
+                }
             }
         }
 

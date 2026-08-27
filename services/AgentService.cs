@@ -17,7 +17,7 @@ public partial class AgentService
 {
     private const int DefaultSearchLimit = 8;
     private const int MaxToolCallsPerRound = 4;
-    private const int MaxHistoryTurns = 6;
+    private const int MaxHistoryTurns = 2;
     private const int MaxCardsDefault = 5;
     private const int MaxCardsForCourseLists = 5;
     private const int MaxTrackedConversations = 500;
@@ -243,7 +243,10 @@ public partial class AgentService
 
             }
 
-            reasoning = ResolveToolCalls(reasoning, conversation);
+            reasoning = ResolveToolCalls(
+                reasoning,
+                conversation,
+                perception.OriginalMessage);
 
             // Bestehende Absicherung vor der Validierung und Planung
             if (reasoning.Intent == AgentIntent.CourseDetails
@@ -505,6 +508,7 @@ public partial class AgentService
             Language = state.Language,
             LastIntent = IntentToWireName(state.LastIntent),
             LastRenderedKind = state.LastRenderedKind.ToString().ToLowerInvariant(),
+            LastSearchTopic = state.LastSearchTopic,
             LastUpdatedAt = state.LastUpdatedAt
         };
 
@@ -530,6 +534,7 @@ public partial class AgentService
         state.Language = snapshot.Language;
         state.LastIntent = ParseIntent(snapshot.LastIntent);
         state.LastRenderedKind = ParseEntityKind(snapshot.LastRenderedKind);
+        state.LastSearchTopic = snapshot.LastSearchTopic;
         state.LastUpdatedAt = snapshot.LastUpdatedAt;
     }
 
@@ -1168,23 +1173,25 @@ public partial class AgentService
             return "(this is the first message)";
         }
 
-        // Assistant prose from older turns often names cards that are no longer
-        // addressable. Keep user turns verbatim; shrink assistant turns so the
-        // classifier cannot treat a previous answer's entities as current facts.
+        // Keep only the latest exchange so older card names cannot poison routing.
+        var recent = conversation.History.TakeLast(2).ToList();
+
         return string.Join(
             "\n",
-            conversation.History.Select(turn =>
+            recent.Select(turn =>
                 turn.Role == "user"
                     ? $"user: {turn.Text}"
-                    : $"assistant: (answered; use Context block for current cards, not this text)"));
+                    : "assistant: (answered; use Context block for current cards only)"));
     }
 
     private static string RenderContext(ConversationState conversation)
     {
-        var lines = new List<string>();
+        var lines = new List<string>
+        {
+            "Priority: answer the CURRENT user message. Do not reuse courses, profiles or cards from older turns unless they appear in this context block."
+        };
 
         // One numbered list only — matching the visual card order of the last answer.
-        // Separate per-type lists used to renumber from [1] each, which mixed follow-ups.
         if (conversation.LastAddressableItems.Count > 0)
         {
             lines.Add("Cards shown in the previous answer (positional refs use this order only):");
@@ -1213,6 +1220,11 @@ public partial class AgentService
             lines.Add($"Active skill: {conversation.ActiveSkill.DisplayName}");
         }
 
+        if (!string.IsNullOrWhiteSpace(conversation.LastSearchTopic))
+        {
+            lines.Add($"Last search topic: {conversation.LastSearchTopic}");
+        }
+
         foreach (var slot in conversation.Slots)
         {
             lines.Add($"Known {slot.Key}: {slot.Value}");
@@ -1230,16 +1242,13 @@ public partial class AgentService
                 "A short reply is most likely the answer to that question.");
         }
 
-        if (lines.Count > 0)
-        {
-            lines.Add(
-                "Positional references such as \"the second one\" address the card list "
-                + "above and nothing else. Items from older answers are gone on purpose. "
-                + "Never reuse a course, profile or card from conversation history — "
-                + "only from this context block.");
-        }
+        lines.Add(
+            "Positional references such as \"the second one\" address the card list "
+            + "above and nothing else. For a new topical search, put the topic into query — "
+            + "never leave query empty when the user named a keyword (e.g. python). "
+            + "Empty query is only for catalogue overviews like \"show all courses\".");
 
-        return lines.Count == 0 ? "(nothing remembered yet)" : string.Join("\n", lines);
+        return string.Join("\n", lines);
     }
 
     private static bool TryExtractFirstJsonObject(string input, out string json)
@@ -1379,24 +1388,53 @@ public partial class AgentService
 
         return text.Contains("ähnliche kurse")
             || text.Contains("ähnlicher kurs")
+            || text.Contains("ähnliche")
             || text.Contains("vergleichbare kurse")
             || text.Contains("weitere kurse")
             || text.Contains("more courses")
-            || text.Contains("similar courses");
+            || text.Contains("similar courses")
+            || text.Contains("similar course");
     }
-        private static bool TryResolveFollowUp(
+
+    private static bool TryResolveFollowUp(
         string message,
         ConversationState conversation,
         out ReasoningResult reasoning)
     {
-        if (IsSimilarCoursesRequest(message)
-            && conversation.ActiveCourse is not null)
+        // Vague "tell me more" with several cards and no active subject → ask,
+        // never guess an old card from history.
+        if (IsVagueDetailFollowUp(message)
+            && conversation.LastAddressableItems.Count > 1
+            && conversation.ActiveCourse is null
+            && conversation.ActiveProfile is null
+            && ExtractFollowUpPosition(message) is null)
         {
-            reasoning = BuildSimilarCoursesReasoning(
-                conversation.ActiveCourse,
-                conversation.Language);
+            reasoning = new ReasoningResult(
+                Intent: AgentIntent.Clarify,
+                Language: conversation.Language,
+                ClarificationQuestion: Localize(
+                    conversation.Language,
+                    "Welchen der gezeigten Einträge meinst du? Sag zum Beispiel „die zweite“.",
+                    "Which of the shown entries do you mean? For example say \"the second one\"."),
+                Slots: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+                ToolCalls: []);
 
             return true;
+        }
+
+        if (IsSimilarCoursesRequest(message))
+        {
+            var topic = ResolveSimilarCoursesTopic(conversation, message);
+
+            if (!string.IsNullOrWhiteSpace(topic))
+            {
+                reasoning = BuildSimilarCoursesReasoning(
+                    topic,
+                    conversation.ActiveCourse,
+                    conversation.Language);
+
+                return true;
+            }
         }
 
         // Priorität 1: Antwort auf eine vorherige Rückfrage
@@ -1426,20 +1464,93 @@ public partial class AgentService
         reasoning = default!;
         return false;
     }
+
+    private static bool IsVagueDetailFollowUp(string message)
+    {
+        var text = message.Trim().ToLowerInvariant();
+
+        if (ExtractFollowUpPosition(message) is not null)
+        {
+            return false;
+        }
+
+        return text is "mehr dazu" or "erzähl mir mehr dazu" or "erzaehl mir mehr dazu"
+            or "tell me more" or "more about it" or "mehr darüber" or "mehr darueber"
+            || text.Contains("erzähl mir mehr dazu", StringComparison.Ordinal)
+            || text.Contains("erzaehl mir mehr dazu", StringComparison.Ordinal)
+            || text.Contains("tell me more about", StringComparison.Ordinal)
+            || (text.Contains("mehr dazu", StringComparison.Ordinal)
+                && !text.Contains("kurs", StringComparison.Ordinal));
+    }
+
+    private static string? ResolveSimilarCoursesTopic(
+        ConversationState conversation,
+        string message)
+    {
+        if (!string.IsNullOrWhiteSpace(conversation.LastSearchTopic))
+        {
+            return conversation.LastSearchTopic.Trim();
+        }
+
+        if (conversation.ActiveCourse is not null)
+        {
+            var fromActive = ExtractCourseSearchTopic(conversation.ActiveCourse.DisplayName);
+            if (!string.IsNullOrWhiteSpace(fromActive))
+            {
+                return fromActive;
+            }
+        }
+
+        if (conversation.LastCourses.Count == 1)
+        {
+            var fromSingle = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
+            if (!string.IsNullOrWhiteSpace(fromSingle))
+            {
+                return fromSingle;
+            }
+        }
+
+        // Multi-card list without a remembered search topic: keyword from first card only.
+        if (conversation.LastCourses.Count > 1)
+        {
+            var fromFirst = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
+            if (!string.IsNullOrWhiteSpace(fromFirst))
+            {
+                return fromFirst;
+            }
+        }
+
+        var cleaned = StripFollowUpTerms(message);
+        var inferred = InferSearchQueryFromUserMessage(cleaned);
+        return string.IsNullOrWhiteSpace(inferred) ? null : inferred;
+    }
+
     private static ReasoningResult BuildSimilarCoursesReasoning(
-        EntityRef activeCourse,
+        string topic,
+        EntityRef? activeCourse,
         string language)
     {
+        var keyword = ExtractCourseSearchTopic(topic) ?? topic.Trim();
+
+        var slots = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["topic"] = keyword
+        };
+
+        if (activeCourse is not null)
+        {
+            slots["similarCourse"] = activeCourse.DisplayName;
+        }
+
         return new ReasoningResult(
             Intent: AgentIntent.CourseSearch,
             Language: language,
             ClarificationQuestion: null,
-            Slots: new Dictionary<string, string>
-            {
-                ["similarCourse"] =
-                    activeCourse.DisplayName
-            },
-            ToolCalls: []);
+            Slots: slots,
+            ToolCalls:
+            [
+                new ToolCallRequest("search_courses", keyword, ReferenceType.None)
+            ]);
     }
     private static ReasoningResult ResolvePendingSlot(
         string message,
@@ -1491,6 +1602,8 @@ public partial class AgentService
                         ReferenceType.None)
                 ]),
 
+            "selection" => ResolveSelectionSlotAnswer(message, conversation, slots),
+
             _ => new ReasoningResult(
                 Intent: AgentIntent.Clarify,
                 Language: conversation.Language,
@@ -1501,6 +1614,29 @@ public partial class AgentService
                 Slots: slots,
                 ToolCalls: [])
         };
+    }
+
+    private static ReasoningResult ResolveSelectionSlotAnswer(
+        string message,
+        ConversationState conversation,
+        Dictionary<string, string> slots)
+    {
+        var position = ExtractFollowUpPosition(message) ?? ExtractItemPosition(message);
+
+        if (position is not null && conversation.LastAddressableItems.Count > 0)
+        {
+            return ResolvePositionalFollowUp(position.Value, conversation);
+        }
+
+        return new ReasoningResult(
+            Intent: AgentIntent.Clarify,
+            Language: conversation.Language,
+            ClarificationQuestion: Localize(
+                conversation.Language,
+                "Welchen der gezeigten Einträge meinst du? Sag zum Beispiel „die zweite“.",
+                "Which of the shown entries do you mean? For example say \"the second one\"."),
+            Slots: slots,
+            ToolCalls: []);
     }
 
     private static bool IsShortSlotAnswer(string message)
@@ -1671,10 +1807,13 @@ public partial class AgentService
     /// <summary>
     /// Turns references and empty arguments into concrete queries. Each tool call
     /// is resolved on its own, so comparing two remembered items keeps two calls.
+    /// When the model leaves search query empty but the user message clearly names
+    /// a topic, the topic is recovered here — empty query is only for catalogue overviews.
     /// </summary>
     private ReasoningResult ResolveToolCalls(
         ReasoningResult reasoning,
-        ConversationState conversation)
+        ConversationState conversation,
+        string userMessage)
     {
         _logger.LogInformation(
             "RESOLVE_START intent={Intent} toolCalls={Calls}",
@@ -1695,6 +1834,9 @@ public partial class AgentService
             "ROUTER_RAW_TOOLCALLS {Calls}",
             JsonSerializer.Serialize(reasoning.ToolCalls));
 
+        var inferredFromMessage = InferSearchQueryFromUserMessage(userMessage);
+        var catalogueOverview = IsCatalogueOverviewRequest(userMessage, inferredFromMessage);
+
         foreach (var call in reasoning.ToolCalls)
         {
             var descriptor = Tools[call.Tool];
@@ -1706,6 +1848,7 @@ public partial class AgentService
             }
 
             var query = call.Query;
+            var reference = call.Reference;
 
             // Profile-related tools may require different profile slots.
             if (string.IsNullOrWhiteSpace(query)
@@ -1732,9 +1875,9 @@ public partial class AgentService
                 }
             }
 
-            if (call.Reference != ReferenceType.None)
+            if (reference != ReferenceType.None)
             {
-                var entity = ResolveReference(call.Reference, descriptor.EntityKind, conversation);
+                var entity = ResolveReference(reference, descriptor.EntityKind, conversation);
 
                 if (entity is not null)
                 {
@@ -1743,6 +1886,7 @@ public partial class AgentService
                         : entity.DisplayName;
                 }
             }
+
             // The classifier may put the user's topic in slots.topic while leaving
             // the optional search query empty. For a targeted course search, the
             // topic must win; an empty query remains reserved for "show all".
@@ -1754,6 +1898,7 @@ public partial class AgentService
                 && !string.IsNullOrWhiteSpace(currentTopic))
             {
                 query = currentTopic;
+                reference = ReferenceType.None;
             }
 
             if (reasoning.Intent == AgentIntent.ProfileSearch
@@ -1762,6 +1907,7 @@ public partial class AgentService
                 && !string.IsNullOrWhiteSpace(profileTopic))
             {
                 query = profileTopic;
+                reference = ReferenceType.None;
             }
 
             if (reasoning.Intent == AgentIntent.SkillSearch
@@ -1769,7 +1915,6 @@ public partial class AgentService
                 && reasoning.Slots.TryGetValue("topic", out var skillTopic)
                 && !string.IsNullOrWhiteSpace(skillTopic))
             {
-
                 _logger.LogInformation(
                     "SKILLSEARCH_FIX topic={Topic}",
                     skillTopic);
@@ -1783,8 +1928,9 @@ public partial class AgentService
                 && !string.IsNullOrWhiteSpace(collectionTopic))
             {
                 query = collectionTopic;
+                reference = ReferenceType.None;
             }
-            
+
             if (reasoning.Intent == AgentIntent.SkillDetails
                 && call.Tool.Equals("get_skill", StringComparison.OrdinalIgnoreCase)
                 && reasoning.Slots.TryGetValue("topic", out var skillDetailTopic)
@@ -1793,7 +1939,6 @@ public partial class AgentService
                 query = skillDetailTopic;
             }
 
-
             if (reasoning.Intent == AgentIntent.CourseDetails
                 && call.Tool.Equals("get_course", StringComparison.OrdinalIgnoreCase)
                 && string.IsNullOrWhiteSpace(query)
@@ -1801,12 +1946,53 @@ public partial class AgentService
                 && !string.IsNullOrWhiteSpace(detailTopic))
             {
                 query = detailTopic;
-                
+
                 _logger.LogInformation(
-                "COURSEDETAILS_FIX topic={Topic} query={Query}",
-                detailTopic,
-                query);
+                    "COURSEDETAILS_FIX topic={Topic} query={Query}",
+                    detailTopic,
+                    query);
             }
+
+            // Fresh topical search in the user message must win over empty query
+            // and over stale card references from older turns.
+            if (!catalogueOverview
+                && !string.IsNullOrWhiteSpace(inferredFromMessage)
+                && call.Tool.Equals("search_courses", StringComparison.OrdinalIgnoreCase)
+                && reasoning.Intent is AgentIntent.CourseSearch or AgentIntent.CourseCompare)
+            {
+                if (string.IsNullOrWhiteSpace(query) || reference != ReferenceType.None)
+                {
+                    _logger.LogInformation(
+                        "QUERY_REPAIR tool=search_courses fromMessage={Query} previous={Previous}",
+                        inferredFromMessage,
+                        query);
+
+                    query = inferredFromMessage;
+                    reference = ReferenceType.None;
+                    reasoning.Slots["topic"] = inferredFromMessage;
+                }
+            }
+
+            if (!catalogueOverview
+                && !string.IsNullOrWhiteSpace(inferredFromMessage)
+                && call.Tool.Equals("search_profiles", StringComparison.OrdinalIgnoreCase)
+                && reasoning.Intent == AgentIntent.ProfileSearch
+                && string.IsNullOrWhiteSpace(query))
+            {
+                query = inferredFromMessage;
+                reasoning.Slots["topic"] = inferredFromMessage;
+            }
+
+            if (!catalogueOverview
+                && !string.IsNullOrWhiteSpace(inferredFromMessage)
+                && call.Tool.Equals("search_collections", StringComparison.OrdinalIgnoreCase)
+                && reasoning.Intent == AgentIntent.Collections
+                && string.IsNullOrWhiteSpace(query))
+            {
+                query = inferredFromMessage;
+                reasoning.Slots["topic"] = inferredFromMessage;
+            }
+
             // An optional argument left empty is a deliberate "show everything"
             // request, so it must not be narrowed down by the remembered context.
             // The same holds for overview intents: "which skills exist" asks about
@@ -1833,14 +2019,86 @@ public partial class AgentService
                     query = topic;
                 }
             }
+
+            // Last resort for targeted searches still left empty.
+            if (string.IsNullOrWhiteSpace(query)
+                && !catalogueOverview
+                && !string.IsNullOrWhiteSpace(inferredFromMessage)
+                && call.Tool is "search_courses" or "search_profiles" or "search_collections")
+            {
+                query = inferredFromMessage;
+                reference = ReferenceType.None;
+            }
+
             _logger.LogInformation(
                 "RESOLVED_TOOL tool={Tool} query={Query}",
                 call.Tool,
                 query);
-            resolved.Add(call with { Query = query?.Trim() ?? string.Empty });
+            resolved.Add(call with { Query = query?.Trim() ?? string.Empty, Reference = reference });
+        }
+
+        // Model returned course_search with no tool call at all — still search.
+        if (resolved.Count == 0
+            && reasoning.Intent == AgentIntent.CourseSearch
+            && !catalogueOverview
+            && !string.IsNullOrWhiteSpace(inferredFromMessage))
+        {
+            _logger.LogInformation(
+                "QUERY_REPAIR inject search_courses query={Query}",
+                inferredFromMessage);
+
+            reasoning.Slots["topic"] = inferredFromMessage;
+            resolved.Add(new ToolCallRequest("search_courses", inferredFromMessage, ReferenceType.None));
         }
 
         return reasoning with { ToolCalls = resolved };
+    }
+
+    /// <summary>
+    /// Builds a compact MCP search query from the current user message (stop-words stripped).
+    /// Example: "Finde kurse zum python" → "python".
+    /// </summary>
+    private static string? InferSearchQueryFromUserMessage(string? message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return null;
+        }
+
+        var terms = ExtractSearchTerms(message);
+        if (terms.Count == 0)
+        {
+            return null;
+        }
+
+        return string.Join(" ", terms);
+    }
+
+    /// <summary>
+    /// True when the user asks for the whole catalogue ("alle Kurse", "which profiles exist")
+    /// with no topical keyword — empty MCP query is then intentional.
+    /// </summary>
+    private static bool IsCatalogueOverviewRequest(string message, string? inferredQuery)
+    {
+        if (!string.IsNullOrWhiteSpace(inferredQuery))
+        {
+            return false;
+        }
+
+        var text = message.Trim().ToLowerInvariant();
+        var asksAll = text.Contains("alle ")
+            || text.Contains("all ")
+            || text.Contains("every ")
+            || text.Contains("sämtliche")
+            || text.Contains("saemtliche")
+            || text.Contains("which profiles exist")
+            || text.Contains("welche profile gibt")
+            || text.Contains("welche kurse gibt es?")
+            || text == "welche kurse gibt es"
+            || text == "zeige alle kurse"
+            || text == "show all courses";
+
+        return asksAll;
     }
 
     private static bool IsOverviewIntent(AgentIntent intent) =>
@@ -2030,7 +2288,10 @@ public partial class AgentService
         {
             toolCalls = [new ToolCallRequest("get_divisions", string.Empty, ReferenceType.None)];
         }
-        else if (IsCourseFollowUpRequest(userMessage) && conversation.LastCourses.Count > 0)
+        else if (IsCourseFollowUpRequest(userMessage)
+                 && (conversation.LastCourses.Count > 0
+                     || !string.IsNullOrWhiteSpace(conversation.LastSearchTopic)
+                     || conversation.ActiveCourse is not null))
         {
             intent = AgentIntent.CourseSearch;
             var followUpQuery = ResolveCourseFollowUpQuery(userMessage, conversation);
@@ -2104,6 +2365,7 @@ public partial class AgentService
                         reasoning.Language,
                         "Welches Zielprofil möchtest du erreichen?",
                         "Which target profile would you like to reach?");
+                    reasoning.Slots["clarifyKind"] = "targetProfile";
                 }
             }
 
@@ -2272,6 +2534,11 @@ public partial class AgentService
             return knownTopic;
         }
 
+        if (!string.IsNullOrWhiteSpace(conversation.LastSearchTopic))
+        {
+            return conversation.LastSearchTopic.Trim();
+        }
+
         // Prefer an explicit subject over an arbitrary card from a multi-card list.
         // Using LastCourses.FirstOrDefault() mixed "more courses" with the wrong title.
         if (conversation.ActiveSkill is not null && !string.IsNullOrWhiteSpace(conversation.ActiveSkill.DisplayName))
@@ -2303,8 +2570,26 @@ public partial class AgentService
             }
         }
 
+        if (conversation.LastCourses.Count > 1)
+        {
+            var fromFirst = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
+            if (!string.IsNullOrWhiteSpace(fromFirst))
+            {
+                return fromFirst;
+            }
+        }
+
         var cleanedMessage = StripFollowUpTerms(message);
-        return string.IsNullOrWhiteSpace(cleanedMessage) ? message.Trim() : cleanedMessage;
+        var inferred = InferSearchQueryFromUserMessage(cleanedMessage);
+        if (!string.IsNullOrWhiteSpace(inferred))
+        {
+            return inferred;
+        }
+
+        // Never send the raw follow-up phrase ("ähnliche Kurse") as MCP query.
+        return conversation.LastSearchTopic?.Trim()
+               ?? ExtractCourseSearchTopic(conversation.ActiveCourse?.DisplayName)
+               ?? "course";
     }
 
     private static string? ExtractCourseSearchTopic(string? courseTitle)
@@ -2791,11 +3076,12 @@ public partial class AgentService
     {
         var stopWords = new HashSet<string>(StringComparer.Ordinal)
         {
-            "finde", "finden", "für", "mich", "mir", "kurse", "kurs", "zum", "zur",
+            "finde", "finden", "für", "mich", "mir", "kurse", "kurs", "kursen", "zum", "zur",
             "zu", "über", "ueber", "im", "in", "der", "die", "das", "den", "dem",
             "ein", "eine", "einen", "mit", "von", "auf", "und", "oder", "bitte",
             "gibt", "es", "the", "course", "courses", "please", "show", "me", "on",
-            "find", "for", "to", "what", "which", "are", "is", "about", "learn", "learning"
+            "find", "for", "to", "what", "which", "are", "is", "about", "learn", "learning",
+            "suche", "zeig", "zeige", "such", "nach", "etwas", "irgendwelche"
         };
 
         return Regex.Matches(message.ToLowerInvariant(), @"[\p{L}\p{N}][\p{L}\p{N}+#.-]*")
@@ -2818,15 +3104,30 @@ public partial class AgentService
         ExecutionPlan plan,
         Evidence evidence)
     {
-        if (plan.Intent != AgentIntent.ProfileCourses
-            || !(plan.UserMessage.Contains("pflicht", StringComparison.OrdinalIgnoreCase)
-                 || plan.UserMessage.Contains("mandatory", StringComparison.OrdinalIgnoreCase)
-                 || plan.UserMessage.Contains("required", StringComparison.OrdinalIgnoreCase)))
+        if (plan.Intent != AgentIntent.ProfileCourses)
         {
             return;
         }
 
-        evidence.Courses.RemoveAll(course => !IsRequired(course.Requirement));
+        var message = plan.UserMessage;
+        var wantsRequired = message.Contains("pflicht", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("mandatory", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("required", StringComparison.OrdinalIgnoreCase);
+
+        var wantsOptional = message.Contains("optional", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("wahl", StringComparison.OrdinalIgnoreCase)
+            || message.Contains("elective", StringComparison.OrdinalIgnoreCase);
+
+        if (wantsRequired && !wantsOptional)
+        {
+            evidence.Courses.RemoveAll(course => !IsRequired(course.Requirement));
+            return;
+        }
+
+        if (wantsOptional && !wantsRequired)
+        {
+            evidence.Courses.RemoveAll(course => IsRequired(course.Requirement));
+        }
     }
 
     /// <summary>
@@ -2932,35 +3233,22 @@ private static List<ToolCallRequest> DeriveSecondRound(
         .ToHashSet(StringComparer.OrdinalIgnoreCase);
     if (plan.Slots.TryGetValue(
             "similarCourse",
-            out var courseName))
+            out var courseName)
+        && !string.IsNullOrWhiteSpace(courseName))
     {
-        if (!alreadyCalled.Contains("get_course"))
+        // Similar-course flow already searches by keyword in round 1.
+        // Never re-query MCP with the full course title — that returned wrong/empty hits.
+        if (!alreadyCalled.Contains("search_courses"))
         {
+            var keyword = ExtractCourseSearchTopic(courseName)
+                          ?? InferSearchQueryFromUserMessage(courseName)
+                          ?? courseName;
+
             calls.Add(
                 new ToolCallRequest(
-                    "get_course",
-                    courseName,
+                    "search_courses",
+                    keyword,
                     ReferenceType.None));
-
-            return calls;
-        }
-
-        if (!alreadyCalled.Contains("search_courses")
-            && evidence.Courses.Count > 0)
-        {
-            var course = evidence.Courses[0];
-
-            if (!string.IsNullOrWhiteSpace(course.Category))
-            {
-                calls.Add(
-                    new ToolCallRequest(
-                        "search_courses",
-                        course.Category,
-                        ReferenceType.None));
-                        
-            }
-
-            return calls;
         }
 
         return calls;
@@ -4373,7 +4661,7 @@ private static List<ToolCallRequest> DeriveSecondRound(
                 : string.Empty;
 
         var skillInstruction = plan.Intent is AgentIntent.SkillSearch or AgentIntent.SkillDetails
-            ? "Explain the requested skill or skill group directly in prose. Include the most relevant names and relationships from DATA; do not ask a follow-up question when DATA contains an answer. If no skill was found but the term looks like a known concept, provide a short explanation instead of asking for clarification."
+            ? "Explain the requested skill or skill group only from DATA. Include the most relevant names and relationships from DATA; do not ask a follow-up question when DATA contains an answer. If DATA has no matching skill, say you did not find it in the catalogue — never invent a definition from general knowledge."
             : string.Empty;
 
         var cardInstruction = plan.Intent is AgentIntent.SkillSearch or AgentIntent.SkillDetails
@@ -4767,35 +5055,57 @@ private static List<ToolCallRequest> DeriveSecondRound(
                 "I need one more detail so I can search for the right thing.");
         }
 
+        var asksForTargetProfile =
+            plan.Slots.ContainsKey("targetProfile")
+            || plan.Slots.ContainsKey("clarifyKind")
+                && plan.Slots.TryGetValue("clarifyKind", out var clarifyKind)
+                && clarifyKind.Equals("targetProfile", StringComparison.OrdinalIgnoreCase)
+            || (plan.ClarificationQuestion?.Contains("Zielprofil", StringComparison.OrdinalIgnoreCase) ?? false)
+            || (plan.ClarificationQuestion?.Contains("target profile", StringComparison.OrdinalIgnoreCase) ?? false);
+
+        var asksForCardSelection =
+            (plan.ClarificationQuestion?.Contains("Eintrag", StringComparison.OrdinalIgnoreCase) ?? false)
+            || (plan.ClarificationQuestion?.Contains("entry", StringComparison.OrdinalIgnoreCase) ?? false)
+            || (plan.ClarificationQuestion?.Contains("zweite", StringComparison.OrdinalIgnoreCase) ?? false)
+            || (plan.ClarificationQuestion?.Contains("second", StringComparison.OrdinalIgnoreCase) ?? false);
+
         var builder = new StringBuilder(question);
-        builder.AppendLine();
-        builder.AppendLine();
 
-        builder.AppendLine(Localize(language,
-            "- Welches Profil hast du aktuell, oder welches möchtest du erreichen?",
-            "- Which profile do you hold today, or which one do you want to reach?"));
+        if (asksForTargetProfile)
+        {
+            builder.AppendLine();
+            builder.AppendLine();
+            builder.AppendLine(Localize(language,
+                "- Welches Profil hast du aktuell, oder welches möchtest du erreichen?",
+                "- Which profile do you hold today, or which one do you want to reach?"));
+            builder.AppendLine(Localize(language,
+                "- Alternativ: für welches Thema oder welchen Skill interessierst du dich?",
+                "- Alternatively: which topic or skill are you interested in?"));
 
-        builder.AppendLine(Localize(language,
-            "- Alternativ: für welches Thema oder welchen Skill interessierst du dich?",
-            "- Alternatively: which topic or skill are you interested in?"));
+            AppendSuggestionBlock(builder, Localize(language,
+                ["Ich bin Product Owner und möchte Scrum Master werden",
+                 "Zeige mir alle Lernprofile",
+                 "Welche Skill-Kategorien gibt es?"],
+                ["I am a Product Owner and want to become a Scrum Master",
+                 "Show me all learning profiles",
+                 "Which skill categories exist?"]));
+        }
+        else if (asksForCardSelection)
+        {
+            AppendSuggestionBlock(builder, Localize(language,
+                ["Die erste", "Die zweite", "Die dritte"],
+                ["The first one", "The second one", "The third one"]));
+        }
 
-        var suggestionBuilder = new StringBuilder();
-
-        AppendSuggestionBlock(suggestionBuilder, Localize(language,
-            ["Ich bin Product Owner und möchte Scrum Master werden",
-             "Zeige mir alle Lernprofile",
-             "Welche Skill-Kategorien gibt es?"],
-            ["I am a Product Owner and want to become a Scrum Master",
-             "Show me all learning profiles",
-             "Which skill categories exist?"]));
-
-        builder.Append(suggestionBuilder);
+        var pendingSlot = asksForTargetProfile
+            ? "targetProfile"
+            : asksForCardSelection
+                ? "selection"
+                : null;
 
         return new AnswerResult(builder.ToString().Trim(), 0, question!)
         {
-            PendingSlot = plan.Intent == AgentIntent.LearningRecommendation
-                ? "targetProfile"
-                : "topic"
+            PendingSlot = pendingSlot
         };
     }
     private static AnswerResult BuildNoResultAnswer(ExecutionPlan plan, string language)
@@ -5358,6 +5668,10 @@ private static List<ToolCallRequest> DeriveSecondRound(
 
             ApplySlots(conversation, plan);
 
+            // Remember the last topical search so "ähnliche / weitere Kurse" does not
+            // fall back to a full course title or an empty query after multi-card answers.
+            RememberSearchTopic(conversation, plan);
+
             // A clarification, a greeting or an out-of-scope reply shows nothing
             // and changes no subject, so the previous context survives. Every
             // other turn replaces it — that is what stops a card list from three
@@ -5405,6 +5719,38 @@ private static List<ToolCallRequest> DeriveSecondRound(
     }
 
     private static readonly string[] CarryOverSlots = { "currentProfile", "targetProfile" };
+
+    private static void RememberSearchTopic(ConversationState conversation, ExecutionPlan plan)
+    {
+        if (plan.Intent is not (
+            AgentIntent.CourseSearch or
+            AgentIntent.SkillCourses or
+            AgentIntent.Collections or
+            AgentIntent.ProfileSearch))
+        {
+            return;
+        }
+
+        var query = plan.FirstRound
+            .Select(call => call.Query)
+            .FirstOrDefault(q => !string.IsNullOrWhiteSpace(q));
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            query = plan.Slots.TryGetValue("topic", out var topic) ? topic : null;
+        }
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            query = InferSearchQueryFromUserMessage(plan.UserMessage);
+        }
+
+        if (!string.IsNullOrWhiteSpace(query)
+            && !query.Equals("course", StringComparison.OrdinalIgnoreCase))
+        {
+            conversation.LastSearchTopic = ExtractCourseSearchTopic(query) ?? query.Trim();
+        }
+    }
 
     private static void ApplyRenderedContext(
         ConversationState conversation,
@@ -6084,6 +6430,12 @@ private static List<ToolCallRequest> DeriveSecondRound(
         /// </summary>
         public EntityKind LastRenderedKind { get; set; } = EntityKind.None;
 
+        /// <summary>
+        /// Keyword from the last topical search — used for "ähnliche/weitere Kurse"
+        /// when ActiveCourse is unset (multi-card answers).
+        /// </summary>
+        public string? LastSearchTopic { get; set; }
+
         public DateTimeOffset LastUpdatedAt { get; set; }
 
         public void Reset()
@@ -6099,6 +6451,7 @@ private static List<ToolCallRequest> DeriveSecondRound(
             ActiveProfile = null;
             ActiveSkill = null;
             LastRenderedKind = EntityKind.None;
+            LastSearchTopic = null;
             Slots.Clear();
             PendingSlot = null;
         }

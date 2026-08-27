@@ -58,6 +58,9 @@ public sealed class ConversationSnapshot
     /// <summary>Dominant card kind of the previous answer (e.g. course, profile).</summary>
     public string LastRenderedKind { get; set; } = "none";
 
+    /// <summary>Last topical search keyword for similar/more-course follow-ups.</summary>
+    public string? LastSearchTopic { get; set; }
+
     public DateTimeOffset LastUpdatedAt { get; set; }
 }
 
