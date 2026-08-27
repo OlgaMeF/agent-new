@@ -1437,6 +1437,29 @@ public partial class AgentService
             }
         }
 
+        // "Welche Skills deckt der Kurs ab?" with an active course → course details,
+        // never get_skill with a polluted search topic.
+        if (IsActiveCourseAttributeQuestion(message, conversation))
+        {
+            reasoning = new ReasoningResult(
+                Intent: AgentIntent.CourseDetails,
+                Language: conversation.Language,
+                ClarificationQuestion: null,
+                Slots: new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["topic"] = conversation.ActiveCourse!.DisplayName
+                },
+                ToolCalls:
+                [
+                    new ToolCallRequest(
+                        "get_course",
+                        conversation.ActiveCourse.Id ?? conversation.ActiveCourse.DisplayName,
+                        ReferenceType.None)
+                ]);
+
+            return true;
+        }
+
         // Priorität 1: Antwort auf eine vorherige Rückfrage
         if (!string.IsNullOrWhiteSpace(conversation.PendingSlot)
             && IsShortSlotAnswer(message))
@@ -1483,37 +1506,76 @@ public partial class AgentService
                 && !text.Contains("kurs", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Follow-ups about the active course's skills/content must stay on get_course.
+    /// </summary>
+    private static bool IsActiveCourseAttributeQuestion(
+        string message,
+        ConversationState conversation)
+    {
+        if (conversation.ActiveCourse is null)
+        {
+            return false;
+        }
+
+        var text = message.ToLowerInvariant();
+        var asksSkills = text.Contains("skill")
+            || text.Contains("kompetenz")
+            || text.Contains("fähigkeit")
+            || text.Contains("faehigkeit")
+            || text.Contains("lerne ich")
+            || text.Contains("lernt man")
+            || text.Contains("inhalte")
+            || text.Contains("deckt");
+
+        var refersToCourse = text.Contains("kurs")
+            || text.Contains("course")
+            || text.Contains("dazu")
+            || text.Contains("dieser")
+            || text.Contains("dieses")
+            || text.Contains("dem ");
+
+        return asksSkills && refersToCourse;
+    }
+
     private static string? ResolveSimilarCoursesTopic(
         ConversationState conversation,
         string message)
     {
-        if (!string.IsNullOrWhiteSpace(conversation.LastSearchTopic))
-        {
-            return conversation.LastSearchTopic.Trim();
-        }
-
+        // Prefer the active course keyword over a possibly polluted LastSearchTopic
+        // (e.g. leftover "welche python" from a bad repair).
         if (conversation.ActiveCourse is not null)
         {
-            var fromActive = ExtractCourseSearchTopic(conversation.ActiveCourse.DisplayName);
+            var fromActive = SanitizeTopicQuery(
+                ExtractCourseSearchTopic(conversation.ActiveCourse.DisplayName)
+                ?? conversation.ActiveCourse.DisplayName);
+
             if (!string.IsNullOrWhiteSpace(fromActive))
             {
                 return fromActive;
             }
         }
 
+        var lastTopic = SanitizeTopicQuery(conversation.LastSearchTopic);
+        if (!string.IsNullOrWhiteSpace(lastTopic))
+        {
+            return lastTopic;
+        }
+
         if (conversation.LastCourses.Count == 1)
         {
-            var fromSingle = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
+            var fromSingle = SanitizeTopicQuery(
+                ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName));
             if (!string.IsNullOrWhiteSpace(fromSingle))
             {
                 return fromSingle;
             }
         }
 
-        // Multi-card list without a remembered search topic: keyword from first card only.
         if (conversation.LastCourses.Count > 1)
         {
-            var fromFirst = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
+            var fromFirst = SanitizeTopicQuery(
+                ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName));
             if (!string.IsNullOrWhiteSpace(fromFirst))
             {
                 return fromFirst;
@@ -1521,8 +1583,7 @@ public partial class AgentService
         }
 
         var cleaned = StripFollowUpTerms(message);
-        var inferred = InferSearchQueryFromUserMessage(cleaned);
-        return string.IsNullOrWhiteSpace(inferred) ? null : inferred;
+        return InferSearchQueryFromUserMessage(cleaned);
     }
 
     private static ReasoningResult BuildSimilarCoursesReasoning(
@@ -1530,7 +1591,7 @@ public partial class AgentService
         EntityRef? activeCourse,
         string language)
     {
-        var keyword = ExtractCourseSearchTopic(topic) ?? topic.Trim();
+        var keyword = SanitizeTopicQuery(ExtractCourseSearchTopic(topic) ?? topic) ?? topic.Trim().ToLowerInvariant();
 
         var slots = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -2030,6 +2091,12 @@ public partial class AgentService
                 reference = ReferenceType.None;
             }
 
+            if (call.Tool is "search_courses" or "search_profiles" or "search_collections"
+                && !string.IsNullOrWhiteSpace(query))
+            {
+                query = SanitizeTopicQuery(query) ?? query.Trim().ToLowerInvariant();
+            }
+
             _logger.LogInformation(
                 "RESOLVED_TOOL tool={Tool} query={Query}",
                 call.Tool,
@@ -2056,7 +2123,7 @@ public partial class AgentService
 
     /// <summary>
     /// Builds a compact MCP search query from the current user message (stop-words stripped).
-    /// Example: "Finde kurse zum python" → "python".
+    /// Example: "Welche Kurse gibt es zu Python?" → "python".
     /// </summary>
     private static string? InferSearchQueryFromUserMessage(string? message)
     {
@@ -2065,13 +2132,29 @@ public partial class AgentService
             return null;
         }
 
-        var terms = ExtractSearchTerms(message);
-        if (terms.Count == 0)
+        return SanitizeTopicQuery(string.Join(" ", ExtractSearchTerms(message)));
+    }
+
+    /// <summary>
+    /// Keeps only content keywords and lowercases for MCP (case-sensitive empty hits observed).
+    /// Drops leftover interrogatives like "welche" that previously produced "welche python".
+    /// </summary>
+    private static string? SanitizeTopicQuery(string? query)
+    {
+        if (string.IsNullOrWhiteSpace(query))
         {
             return null;
         }
 
-        return string.Join(" ", terms);
+        var terms = ExtractSearchTerms(query);
+        if (terms.Count == 0)
+        {
+            // Already a short keyword (e.g. "python") with no stop-words to strip.
+            var trimmed = query.Trim().ToLowerInvariant();
+            return trimmed.Length >= 2 && !trimmed.Contains(' ') ? trimmed : null;
+        }
+
+        return string.Join(" ", terms).ToLowerInvariant();
     }
 
     /// <summary>
@@ -2093,8 +2176,7 @@ public partial class AgentService
             || text.Contains("saemtliche")
             || text.Contains("which profiles exist")
             || text.Contains("welche profile gibt")
-            || text.Contains("welche kurse gibt es?")
-            || text == "welche kurse gibt es"
+            || (text.Contains("welche kurse gibt es") && !text.Contains(" zu "))
             || text == "zeige alle kurse"
             || text == "show all courses";
 
@@ -2526,7 +2608,7 @@ public partial class AgentService
     {
         var knownTopic = conversation.Slots.TryGetValue("topic", out var topicValue)
             && !string.IsNullOrWhiteSpace(topicValue)
-            ? topicValue.Trim()
+            ? SanitizeTopicQuery(topicValue)
             : null;
 
         if (!string.IsNullOrWhiteSpace(knownTopic))
@@ -2534,25 +2616,27 @@ public partial class AgentService
             return knownTopic;
         }
 
-        if (!string.IsNullOrWhiteSpace(conversation.LastSearchTopic))
-        {
-            return conversation.LastSearchTopic.Trim();
-        }
-
-        // Prefer an explicit subject over an arbitrary card from a multi-card list.
-        // Using LastCourses.FirstOrDefault() mixed "more courses" with the wrong title.
-        if (conversation.ActiveSkill is not null && !string.IsNullOrWhiteSpace(conversation.ActiveSkill.DisplayName))
-        {
-            return conversation.ActiveSkill.DisplayName.Trim();
-        }
-
         if (conversation.ActiveCourse is not null)
         {
-            var fromActive = ExtractCourseSearchTopic(conversation.ActiveCourse.DisplayName);
+            var fromActive = SanitizeTopicQuery(
+                ExtractCourseSearchTopic(conversation.ActiveCourse.DisplayName)
+                ?? conversation.ActiveCourse.DisplayName);
             if (!string.IsNullOrWhiteSpace(fromActive))
             {
                 return fromActive;
             }
+        }
+
+        var lastTopic = SanitizeTopicQuery(conversation.LastSearchTopic);
+        if (!string.IsNullOrWhiteSpace(lastTopic))
+        {
+            return lastTopic;
+        }
+
+        // Prefer an explicit subject over an arbitrary card from a multi-card list.
+        if (conversation.ActiveSkill is not null && !string.IsNullOrWhiteSpace(conversation.ActiveSkill.DisplayName))
+        {
+            return conversation.ActiveSkill.DisplayName.Trim().ToLowerInvariant();
         }
 
         if (conversation.ActiveProfile is not null
@@ -2561,21 +2645,13 @@ public partial class AgentService
             return conversation.ActiveProfile.DisplayName.Trim();
         }
 
-        if (conversation.LastCourses.Count == 1)
+        if (conversation.LastCourses.Count >= 1)
         {
-            var fromSingle = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
-            if (!string.IsNullOrWhiteSpace(fromSingle))
+            var fromCard = SanitizeTopicQuery(
+                ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName));
+            if (!string.IsNullOrWhiteSpace(fromCard))
             {
-                return fromSingle;
-            }
-        }
-
-        if (conversation.LastCourses.Count > 1)
-        {
-            var fromFirst = ExtractCourseSearchTopic(conversation.LastCourses[0].DisplayName);
-            if (!string.IsNullOrWhiteSpace(fromFirst))
-            {
-                return fromFirst;
+                return fromCard;
             }
         }
 
@@ -2587,9 +2663,9 @@ public partial class AgentService
         }
 
         // Never send the raw follow-up phrase ("ähnliche Kurse") as MCP query.
-        return conversation.LastSearchTopic?.Trim()
-               ?? ExtractCourseSearchTopic(conversation.ActiveCourse?.DisplayName)
-               ?? "course";
+        return SanitizeTopicQuery(conversation.LastSearchTopic)
+               ?? SanitizeTopicQuery(ExtractCourseSearchTopic(conversation.ActiveCourse?.DisplayName))
+               ?? string.Empty;
     }
 
     private static string? ExtractCourseSearchTopic(string? courseTitle)
@@ -3076,12 +3152,16 @@ public partial class AgentService
     {
         var stopWords = new HashSet<string>(StringComparer.Ordinal)
         {
-            "finde", "finden", "für", "mich", "mir", "kurse", "kurs", "kursen", "zum", "zur",
-            "zu", "über", "ueber", "im", "in", "der", "die", "das", "den", "dem",
-            "ein", "eine", "einen", "mit", "von", "auf", "und", "oder", "bitte",
+            "finde", "finden", "für", "fuer", "mich", "mir", "kurse", "kurs", "kursen", "zum", "zur",
+            "zu", "über", "ueber", "im", "in", "der", "die", "das", "den", "dem", "des",
+            "ein", "eine", "einen", "einer", "eines", "mit", "von", "auf", "und", "oder", "bitte",
             "gibt", "es", "the", "course", "courses", "please", "show", "me", "on",
             "find", "for", "to", "what", "which", "are", "is", "about", "learn", "learning",
-            "suche", "zeig", "zeige", "such", "nach", "etwas", "irgendwelche"
+            "suche", "zeig", "zeige", "zeigen", "such", "nach", "etwas", "irgendwelche",
+            "welche", "welcher", "welches", "welchen", "wem", "wen", "wie", "wo", "wann",
+            "warum", "wieso", "weshalb", "kannst", "koennen", "können", "hast", "haben",
+            "gebe", "gib", "gibt", "lass", "lasse", "mal", "doch", "noch", "auch",
+            "details", "detail", "info", "infos", "information", "informationen"
         };
 
         return Regex.Matches(message.ToLowerInvariant(), @"[\p{L}\p{N}][\p{L}\p{N}+#.-]*")
@@ -5745,10 +5825,10 @@ private static List<ToolCallRequest> DeriveSecondRound(
             query = InferSearchQueryFromUserMessage(plan.UserMessage);
         }
 
-        if (!string.IsNullOrWhiteSpace(query)
-            && !query.Equals("course", StringComparison.OrdinalIgnoreCase))
+        var sanitized = SanitizeTopicQuery(query);
+        if (!string.IsNullOrWhiteSpace(sanitized))
         {
-            conversation.LastSearchTopic = ExtractCourseSearchTopic(query) ?? query.Trim();
+            conversation.LastSearchTopic = sanitized;
         }
     }
 
