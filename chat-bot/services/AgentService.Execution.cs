@@ -655,8 +655,15 @@ private static List<ToolCallRequest> DeriveSecondRound(
 
                 "get_divisions" => await GetDivisionsAsync(cancellationToken),
                 "search_collections" => await SearchCollectionsAsync(call.Query, cancellationToken),
-                "get_my_bookmarks" => await GetBookmarksAsync(cancellationToken),
-                "get_my_progress" => await GetProgressAsync(cancellationToken),
+                // Personal user-context tools are unavailable in this agent.
+                "get_my_bookmarks" => new ToolOutcome("get_my_bookmarks", Failed: true)
+                {
+                    RequiresSignIn = true
+                },
+                "get_my_progress" => new ToolOutcome("get_my_progress", Failed: true)
+                {
+                    RequiresSignIn = true
+                },
 
                 _ => null
             };
