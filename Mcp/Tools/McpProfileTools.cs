@@ -212,7 +212,6 @@ public class McpProfileTools
                     {
                         x.ca.CourseId,
                         CourseTitle = x.c.Title,
-                        x.ca.RequirementType,
                         x.ca.SortOrder,
                         CourseClusterName = x.c.ClusterName ?? "Allgemein",
                         x.c.DurationInHours,
