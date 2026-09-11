@@ -1,11 +1,8 @@
 using MB.ComTools.Apps.Data;
-using MB.ComTools.Apps.Setup.Mcp;
-using MB.ComTools.Apps.Setup.Mcp.Dtos;
 using MB.Core.Types;
 using Microsoft.EntityFrameworkCore;
 using ModelContextProtocol.Server;
 using System.ComponentModel;
-using System.Security.Claims;
 
 namespace MB.ComTools.Apps.Setup.Mcp.Tools;
 
@@ -19,18 +16,15 @@ public class McpUserTools
     private readonly AppDbContext _db;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly ILogger<McpUserTools> _logger;
-    private readonly McpOptions _options;
 
     public McpUserTools(
         AppDbContext db,
         IHttpContextAccessor httpContextAccessor,
-        ILogger<McpUserTools> logger,
-        McpOptions options)
+        ILogger<McpUserTools> logger)
     {
         _db = db;
         _httpContextAccessor = httpContextAccessor;
         _logger = logger;
-        _options = options;
     }
 
     /// <summary>
@@ -38,13 +32,13 @@ public class McpUserTools
     /// completed courses, in-progress courses, and per-profile completion rates.
     /// </summary>
     [McpServerTool, Description("Returns the authenticated user's learning progress: completed courses, in-progress courses with completion percentage, and overall site completion rate. Requires a valid OIDC Bearer token in the Authorization header.")]
-    public async Task<McpProgressResponse> get_my_progress(CancellationToken cancellationToken = default)
+    public async Task<object> get_my_progress(CancellationToken cancellationToken = default)
     {
         var userId = GetCurrentUserId();
         if (userId == null)
         {
             _logger.LogWarning("get_my_progress called without authenticated user");
-            throw new InvalidOperationException("[unauthorized] Authentication required for progress.");
+            return new { error = "Authentication required. Please provide a valid bearer token." };
         }
 
         _logger.LogInformation("Loading progress for authenticated user");
@@ -70,24 +64,26 @@ public class McpUserTools
         // Split into completed vs in-progress
         var completed = completions
             .Where(c => c.ProgressPercentage >= 100)
-            .Select(c => new McpProgressCourseDto(
-                CourseId: c.BaseEntryId,
-                CourseTitle: c.Title,
-                ProgressPercentage: c.ProgressPercentage,
-                CompletedAt: c.CompletedAt,
-                DeepLink: BuildDeepLink(c.BaseEntryId)))
-            .OrderByDescending(c => c.CompletedAt)
+            .Select(c => new
+            {
+                courseId = c.BaseEntryId,
+                courseTitle = c.Title,
+                completedAt = c.CompletedAt,
+                deepLink = BuildDeepLink(c.BaseEntryId)
+            })
+            .OrderByDescending(c => c.completedAt)
             .ToList();
 
         var inProgress = completions
             .Where(c => c.ProgressPercentage < 100)
-            .Select(c => new McpProgressCourseDto(
-                CourseId: c.BaseEntryId,
-                CourseTitle: c.Title,
-                ProgressPercentage: c.ProgressPercentage,
-                CompletedAt: c.CompletedAt,
-                DeepLink: BuildDeepLink(c.BaseEntryId)))
-            .OrderByDescending(c => c.ProgressPercentage)
+            .Select(c => new
+            {
+                courseId = c.BaseEntryId,
+                courseTitle = c.Title,
+                progressPercentage = c.ProgressPercentage,
+                deepLink = BuildDeepLink(c.BaseEntryId)
+            })
+            .OrderByDescending(c => c.progressPercentage)
             .ToList();
 
         // Calculate per-profile completion rates
@@ -104,29 +100,36 @@ public class McpUserTools
 
         var profileCompletionRates = new[]
         {
-            new McpProgressRateDto(
-                SiteUrl: "learn-skills",
-                CompletedCount: completedInSite,
-                TotalCourses: totalCoursesInSite,
-                CompletionRate: totalCoursesInSite > 0
+            new
+            {
+                siteUrl = "learn-skills",
+                completedCount = completedInSite,
+                totalCourses = totalCoursesInSite,
+                completionRate = totalCoursesInSite > 0
                     ? Math.Round((double)completedInSite / totalCoursesInSite * 100, 2)
-                    : 0.0)
+                    : 0.0
+            }
         };
 
-        return new McpProgressResponse(completed, inProgress, profileCompletionRates);
+        return new
+        {
+            completedCourses = completed,
+            inProgressCourses = inProgress,
+            profileCompletionRates = profileCompletionRates
+        };
     }
 
     /// <summary>
     /// Get current authenticated user's bookmarks (courses and profiles).
     /// </summary>
     [McpServerTool, Description("Returns the authenticated user's bookmarked courses and learning profiles with their deep links. Requires a valid OIDC Bearer token in the Authorization header.")]
-    public async Task<McpBookmarksResponse> get_my_bookmarks(CancellationToken cancellationToken = default)
+    public async Task<object> get_my_bookmarks(CancellationToken cancellationToken = default)
     {
         var userId = GetCurrentUserId();
         if (userId == null)
         {
             _logger.LogWarning("get_my_bookmarks called without authenticated user");
-            throw new InvalidOperationException("[unauthorized] Authentication required for bookmarks.");
+            return new { error = "Authentication required. Please provide a valid bearer token." };
         }
 
         _logger.LogInformation("Loading bookmarks for authenticated user");
@@ -150,23 +153,31 @@ public class McpUserTools
         // Split by discriminator
         var courseBookmarks = bookmarks
             .Where(b => b.Discriminator == "LearnCourse")
-            .Select(b => new McpBookmarkCourseDto(
-                CourseId: b.BaseEntryId,
-                CourseTitle: b.Title,
-                DeepLink: BuildDeepLink(b.BaseEntryId)))
-            .OrderBy(b => b.CourseTitle)
+            .Select(b => new
+            {
+                courseId = b.BaseEntryId,
+                courseTitle = b.Title,
+                deepLink = BuildDeepLink(b.BaseEntryId)
+            })
+            .OrderBy(b => b.courseTitle)
             .ToList();
 
         var profileBookmarks = bookmarks
             .Where(b => b.Discriminator == "LearnProfile")
-            .Select(b => new McpBookmarkProfileDto(
-                ProfileId: b.BaseEntryId,
-                ProfileTitle: b.Title,
-                DeepLink: BuildProfileDeepLink(b.BaseEntryId)))
-            .OrderBy(b => b.ProfileTitle)
+            .Select(b => new
+            {
+                profileId = b.BaseEntryId,
+                profileTitle = b.Title,
+                deepLink = BuildProfileDeepLink(b.BaseEntryId)
+            })
+            .OrderBy(b => b.profileTitle)
             .ToList();
 
-        return new McpBookmarksResponse(courseBookmarks, profileBookmarks);
+        return new
+        {
+            courses = courseBookmarks,
+            profiles = profileBookmarks
+        };
     }
 
     /// <summary>
@@ -174,7 +185,7 @@ public class McpUserTools
     /// No authentication required.
     /// </summary>
     [McpServerTool, Description("Returns public curated content collections from the learn-skills platform. No authentication required. Collections are ordered by last update date.")]
-    public async Task<McpCollectionListResponse> search_collections(
+    public async Task<object> search_collections(
         int limit = 20,
         int offset = 0,
         CancellationToken cancellationToken = default)
@@ -212,16 +223,24 @@ public class McpUserTools
             .ToListAsync(cancellationToken);
 
         var result = collections
-            .Select(cc => new McpCollectionDto(
-                Id: cc.id,
-                Title: cc.title,
-                Summary: cc.summary,
-                ItemCount: cc.itemCount,
-                CollectionType: cc.collectionType,
-                DeepLink: BuildCollectionDeepLink(cc.id)))
+            .Select(cc => new
+            {
+                cc.id,
+                cc.title,
+                cc.summary,
+                cc.itemCount,
+                cc.collectionType,
+                deepLink = BuildCollectionDeepLink(cc.id)
+            })
             .ToList();
 
-        return new McpCollectionListResponse(result, totalCount, limit, offset);
+        return new
+        {
+            collections = result,
+            totalCount,
+            limit,
+            offset
+        };
     }
 
     /// <summary>
@@ -236,24 +255,9 @@ public class McpUserTools
             return null;
         }
 
-        if (!string.IsNullOrWhiteSpace(_options.UserToolsScope)
-            && !HasScope(user, _options.UserToolsScope))
-        {
-            throw new InvalidOperationException("[forbidden] The token lacks the required user-tools scope.");
-        }
-
         // Try "sub" claim first (OIDC standard), then NameIdentifier
         return user.FindFirst("sub")?.Value
             ?? user.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
-    }
-
-    private static bool HasScope(ClaimsPrincipal user, string requiredScope)
-    {
-        var values = user.FindAll("scope")
-            .Concat(user.FindAll("scp"))
-            .SelectMany(claim => claim.Value.Split(' ', StringSplitOptions.RemoveEmptyEntries));
-
-        return values.Contains(requiredScope, StringComparer.Ordinal);
     }
 
     /// <summary>
