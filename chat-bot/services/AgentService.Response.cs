@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Runtime.CompilerServices;
 using MB.ComTools.Apps.Content.Services.Agent;
+using MB.ComTools.Apps.Setup.Mcp.Dtos;
 
 namespace MB.ComTools.Apps.Content.Services;
 
@@ -159,8 +160,8 @@ public partial class AgentService
             : plan.Intent is AgentIntent.ProfileDetails or AgentIntent.ProfileCourses
                 ? "The profile card contains the profile facts. Keep the introduction to one short answer and do not repeat the card description."
                 : plan.Intent == AgentIntent.CourseSearch
-                    ? "Begin with one or two short orientation sentences. Each course card includes a factual description of at most 25 words, plus title, platform and duration. Do not repeat card details in the introduction."
-                    : "Course cards show only title, platform and duration. Do not restate those values.";
+                    ? "Begin with one or two short orientation sentences. Each course card includes a factual description of at most 25 words, plus title, platform, duration and difficulty level when known. Do not repeat card details in the introduction."
+                    : "Course cards show only title, platform, duration and difficulty level when known. Do not restate those values.";
 
         var profileCourseInstruction = evidence.Courses.Count > 0
             ? "DATA contains profile course assignments. Never say that no courses exist; answer from those assignments."
@@ -868,12 +869,16 @@ public partial class AgentService
                 AppendCardField(builder, "DESCRIPTION", TruncateWords(fallbackDescription, 25));
                 AppendCardField(builder, "PLATFORM", course.Platform ?? "k. A.");
                 AppendCardField(builder, "DURATION", course.Duration ?? "k. A.");
+                AppendCardField(
+                    builder,
+                    "DIFFICULTY",
+                    McpDifficultyLevel.ToDisplayLabel(course.DifficultyLevel, plan.Language) ?? "k. A.");
                 AppendCardField(builder, "URL", course.DeepLink);
                 builder.AppendLine("[/COURSE_CARD]");
                 var courseRef = new EntityRef(course.Id, course.Title, EntityKind.Course);
                 rendered.Courses.Add(courseRef);
                 rendered.Addressable.Add(courseRef);
-                rendered.StructuredCards.Add(BuildCourseCardDto(course, fallbackDescription));
+                rendered.StructuredCards.Add(BuildCourseCardDto(course, fallbackDescription, plan.Language));
             }
         }
 
@@ -916,8 +921,14 @@ public partial class AgentService
         return rendered;
     }
 
-    private static ChatCardDto BuildCourseCardDto(CourseInfo course, string? description) =>
-        new()
+    private static ChatCardDto BuildCourseCardDto(
+        CourseInfo course,
+        string? description,
+        string language)
+    {
+        var difficulty = McpDifficultyLevel.ToDisplayLabel(course.DifficultyLevel, language);
+
+        return new()
         {
             Kind = "course",
             Id = course.Id,
@@ -927,9 +938,15 @@ public partial class AgentService
             Facts =
             [
                 new ChatFactDto { Label = "Plattform", Value = string.IsNullOrWhiteSpace(course.Platform) ? "k. A." : course.Platform },
-                new ChatFactDto { Label = "Dauer", Value = string.IsNullOrWhiteSpace(course.Duration) ? "k. A." : course.Duration }
+                new ChatFactDto { Label = "Dauer", Value = string.IsNullOrWhiteSpace(course.Duration) ? "k. A." : course.Duration },
+                new ChatFactDto
+                {
+                    Label = IsGerman(language) ? "Niveau" : "Level",
+                    Value = difficulty ?? "k. A."
+                }
             ]
         };
+    }
 
     private static ChatCardDto BuildProfileCardDto(ProfileInfo profile, ExecutionPlan plan, Evidence evidence)
     {

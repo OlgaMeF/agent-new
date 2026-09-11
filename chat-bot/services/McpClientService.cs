@@ -43,6 +43,7 @@ public class McpClientService
         int offset,
         string? platform = null,
         string? clusterName = null,
+        string? difficultyLevel = null,
         CancellationToken cancellationToken = default)
     {
         var args = new Dictionary<string, object?>
@@ -54,6 +55,7 @@ public class McpClientService
 
         AddIfPresent(args, "platform", platform);
         AddIfPresent(args, "clusterName", clusterName);
+        AddIfPresent(args, "difficultyLevel", difficultyLevel);
 
         return CallToolAsync("search_courses", args, cancellationToken);
     }

@@ -59,9 +59,9 @@ public partial class AgentService
     private static readonly Dictionary<string, ToolDescriptor> Tools = new(StringComparer.OrdinalIgnoreCase)
     {
         ["search_courses"] = new("search_courses", EntityKind.Course, ArgumentNeed.Topic,
-            "Find courses by topic or keyword."),
+            "Find courses by topic or keyword. Optional difficultyLevel filter: Beginner, Intermediate, Expert."),
         ["get_course"] = new("get_course", EntityKind.Course, ArgumentNeed.Identifier,
-            "Get course details."),
+            "Get course details including difficulty level."),
         ["get_courses_by_tag"] = new("get_courses_by_tag", EntityKind.Course, ArgumentNeed.Topic,
             "Get courses for a skill."),
 

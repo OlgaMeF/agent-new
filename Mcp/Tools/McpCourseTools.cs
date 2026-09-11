@@ -36,11 +36,13 @@ public class McpCourseTools
     /// Search published LearnCourses with flexible filters.
     /// Supports filtering by query text, platform, cluster, and pagination.
     /// </summary>
-    [McpServerTool, Description("Search active published courses on the learn-skills platform. Filter by text query, platform (e.g. 'LinkedIn Learning'), or cluster name. Returns paginated course card summaries with title, instructor, duration, platform, and deep link.")]
+    [McpServerTool, Description("Search active published courses on the learn-skills platform. Filter by text query, platform (e.g. 'LinkedIn Learning'), cluster name, or difficulty level (Beginner, Intermediate, Expert). Returns paginated course card summaries with title, instructor, duration, difficulty, platform, and deep link.")]
     public async Task<McpCourseListResponse> search_courses(
         string? query = null,
         string? platform = null,
         string? clusterName = null,
+        [Description("Optional difficulty filter: Beginner, Intermediate, Expert (or German Anfänger/Fortgeschritten/Experte). Omit to include all levels.")]
+        string? difficultyLevel = null,
         int limit = 50,
         int offset = 0,
         CancellationToken cancellationToken = default)
@@ -57,7 +59,7 @@ public class McpCourseTools
         limit = Math.Clamp(limit, 1, 500);
         offset = Math.Max(offset, 0);
 
-        var cacheKey = $"courses:search:{McpCacheService.HashParams(new { query, platform, clusterName, limit, offset })}";
+        var cacheKey = $"courses:search:{McpCacheService.HashParams(new { query, platform, clusterName, difficultyLevel, limit, offset })}";
         return await _cache.GetOrCreateAsync(
             cacheKey,
             "courses",
@@ -93,6 +95,12 @@ public class McpCourseTools
                 if (!string.IsNullOrWhiteSpace(clusterName))
                 {
                     baseQuery = baseQuery.Where(c => EF.Functions.ILike(c.ClusterName ?? "", $"%{clusterName}%"));
+                }
+
+                // Apply difficulty filter (integer enum on LearnCourse.DifficultyLevel).
+                if (McpDifficultyLevel.TryParse(difficultyLevel, out var difficultyValue))
+                {
+                    baseQuery = baseQuery.Where(c => (int)c.DifficultyLevel == difficultyValue);
                 }
 
                 var orderedQuery = !string.IsNullOrWhiteSpace(query)
@@ -142,7 +150,7 @@ public class McpCourseTools
     /// <summary>
     /// Get full details for a single LearnCourse by ID.
     /// </summary>
-    [McpServerTool, Description("Get complete details for a single published course by its ID, including full description, instructor, duration, platform, skill tags, and direct deep link to the course.")]
+    [McpServerTool, Description("Get complete details for a single published course by its ID, including full description, instructor, duration, difficulty level, platform, skill tags, and direct deep link to the course.")]
     public async Task<McpCourseDetailDto?> get_course(
         [Description("The course ID (BaseEntryId) to look up.")] string courseId,
         CancellationToken cancellationToken = default)
@@ -339,6 +347,7 @@ public class McpCourseTools
             ExternalCourseId: string.IsNullOrWhiteSpace(course.ExternalCourseId) ? null : course.ExternalCourseId,
             Instructor: string.IsNullOrWhiteSpace(course.Instructor) ? null : course.Instructor,
             DurationInHours: string.IsNullOrWhiteSpace(course.DurationInHours) ? null : course.DurationInHours,
+            DifficultyLevel: McpDifficultyLevel.ToWireValue(course.DifficultyLevel),
             ClusterId: string.IsNullOrWhiteSpace(course.ClusterId) ? null : course.ClusterId,
             ClusterName: string.IsNullOrWhiteSpace(course.ClusterName) ? null : course.ClusterName,
             SubClusterId: string.IsNullOrWhiteSpace(course.SubClusterId) ? null : course.SubClusterId,
@@ -389,6 +398,7 @@ public class McpCourseTools
             ExternalCourseId: string.IsNullOrWhiteSpace(course.ExternalCourseId) ? null : course.ExternalCourseId,
             Instructor: string.IsNullOrWhiteSpace(course.Instructor) ? null : course.Instructor,
             DurationInHours: string.IsNullOrWhiteSpace(course.DurationInHours) ? null : course.DurationInHours,
+            DifficultyLevel: McpDifficultyLevel.ToWireValue(course.DifficultyLevel),
             ClusterId: string.IsNullOrWhiteSpace(course.ClusterId) ? null : course.ClusterId,
             ClusterName: string.IsNullOrWhiteSpace(course.ClusterName) ? null : course.ClusterName,
             SubClusterId: string.IsNullOrWhiteSpace(course.SubClusterId) ? null : course.SubClusterId,

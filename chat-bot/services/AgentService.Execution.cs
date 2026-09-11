@@ -5,6 +5,7 @@ using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Runtime.CompilerServices;
 using MB.ComTools.Apps.Content.Services.Agent;
+using MB.ComTools.Apps.Setup.Mcp.Dtos;
 
 namespace MB.ComTools.Apps.Content.Services;
 
@@ -28,6 +29,7 @@ public partial class AgentService
             return evidence;
         }
 
+        ApplyDifficultyArgs(plan, plan.FirstRound);
         await RunRoundAsync(plan.FirstRound, evidence, cancellationToken);
         _logger.LogInformation(
             "RESPONSE_EVIDENCE courses={Count}",
@@ -60,6 +62,7 @@ public partial class AgentService
                 "PHASE4_ROUND2 toolCalls={ToolCalls}",
                 DescribeToolCalls(secondRound));
 
+            ApplyDifficultyArgs(plan, secondRound);
             await RunRoundAsync(secondRound, evidence, cancellationToken);
 
         }
@@ -162,7 +165,8 @@ public partial class AgentService
             "besser", "beste", "besten", "eignet", "eignen", "sich", "am", "schon", "gut", "aus",
             "kann", "ich", "du", "wir", "kenntnisse", "kentnisse", "erweitern", "erzähl", "erzaehl",
             "mehr", "tell", "more", "about", "beginner", "beginners", "anfaenger", "anfänger",
-            "fortgeschritten", "advanced", "empfehlung", "empfehlen", "externe", "interne"
+            "einsteiger", "intermediate", "expert", "experte", "experts", "niveau", "schwierigkeit",
+            "schwierigkeitsniveau", "level", "fortgeschritten", "advanced", "empfehlung", "empfehlen", "externe", "interne"
         };
 
         return Regex.Matches(message.ToLowerInvariant(), @"[\p{L}\p{N}][\p{L}\p{N}+#.-]*")
@@ -675,7 +679,7 @@ private static List<ToolCallRequest> DeriveSecondRound(
         {
             return call.Tool.ToLowerInvariant() switch
             {
-                "search_courses" => await SearchCoursesAsync(call.Query, cancellationToken),
+                "search_courses" => await SearchCoursesAsync(call, cancellationToken),
                 "get_course" => await GetCourseAsync(call.Query, cancellationToken),
                 "get_courses_by_tag" => await GetCoursesByTagAsync(call.Query, cancellationToken),
 
@@ -708,12 +712,17 @@ private static List<ToolCallRequest> DeriveSecondRound(
 
     // ---------------- course tools ----------------
 
-    private async Task<ToolOutcome> SearchCoursesAsync(string query, CancellationToken cancellationToken)
+    private async Task<ToolOutcome> SearchCoursesAsync(
+        ToolCallRequest call,
+        CancellationToken cancellationToken)
     {
+        call.Args.TryGetValue("difficultyLevel", out var difficultyLevel);
+
         var raw = await _mcpClientService.SearchCoursesAsync(
-            query: query,
+            query: call.Query,
             limit: DefaultSearchLimit,
             offset: 0,
+            difficultyLevel: difficultyLevel,
             cancellationToken: cancellationToken);
 
         var courses = ExtractCourses(raw);
@@ -725,7 +734,7 @@ private static List<ToolCallRequest> DeriveSecondRound(
 
         return new ToolOutcome("search_courses")
         {
-        Courses = courses
+            Courses = courses
         };
     }
 
@@ -1144,5 +1153,112 @@ private static List<ToolCallRequest> DeriveSecondRound(
             && array.ValueKind == JsonValueKind.Array
                 ? ExtractCourses(array)
                 : new List<CourseInfo>();
+    }
+
+    /// <summary>
+    /// Copies difficulty from plan slots / user text onto search_courses Args so MCP
+    /// can filter Beginner / Intermediate / Expert without changing the topic query.
+    /// </summary>
+    private static void ApplyDifficultyArgs(
+        ExecutionPlan plan,
+        IEnumerable<ToolCallRequest> calls)
+    {
+        var difficulty = ResolveDifficultyLevelArg(plan.Slots, plan.UserMessage);
+
+        if (difficulty is null)
+        {
+            return;
+        }
+
+        foreach (var call in calls)
+        {
+            if (!call.Tool.Equals("search_courses", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (!call.Args.ContainsKey("difficultyLevel"))
+            {
+                call.Args["difficultyLevel"] = difficulty;
+            }
+        }
+    }
+
+    private static string? ResolveDifficultyLevelArg(
+        IReadOnlyDictionary<string, string> slots,
+        string? userMessage)
+    {
+        if (slots.TryGetValue("difficultyLevel", out var fromSlot))
+        {
+            var normalized = McpDifficultyLevel.NormalizeFilter(fromSlot);
+
+            if (normalized is not null)
+            {
+                return normalized;
+            }
+        }
+
+        if (slots.TryGetValue("audience", out var audience))
+        {
+            var fromAudience = McpDifficultyLevel.NormalizeFilter(audience);
+
+            // Audience is Beginner/Intermediate/Expert only — never Unset.
+            if (fromAudience is not null
+                && !fromAudience.Equals(McpDifficultyLevel.Unset, StringComparison.OrdinalIgnoreCase))
+            {
+                return fromAudience;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(userMessage)
+            && TryInferDifficultyLevel(userMessage, out var inferred))
+        {
+            return inferred;
+        }
+
+        return null;
+    }
+
+    private static bool TryInferDifficultyLevel(string message, out string filterValue)
+    {
+        filterValue = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            return false;
+        }
+
+        // Prefer explicit niveau phrases over bare words like "advanced".
+        if (!McpDifficultyLevel.TryParse(message, out var level) || level == 0)
+        {
+            return false;
+        }
+
+        // Avoid matching "advanced" inside unrelated compound words by requiring
+        // a clear difficulty cue in German or English.
+        var text = message.ToLowerInvariant()
+            .Replace("ä", "ae", StringComparison.Ordinal)
+            .Replace("ö", "oe", StringComparison.Ordinal)
+            .Replace("ü", "ue", StringComparison.Ordinal);
+
+        var hasCue = text.Contains("anfaenger", StringComparison.Ordinal)
+            || text.Contains("einsteiger", StringComparison.Ordinal)
+            || text.Contains("beginner", StringComparison.Ordinal)
+            || text.Contains("fortgeschritten", StringComparison.Ordinal)
+            || text.Contains("intermediate", StringComparison.Ordinal)
+            || text.Contains("experte", StringComparison.Ordinal)
+            || text.Contains("expert", StringComparison.Ordinal)
+            || text.Contains("schwierigkeit", StringComparison.Ordinal)
+            || text.Contains("niveau", StringComparison.Ordinal)
+            || text.Contains(" fuer anfaenger", StringComparison.Ordinal)
+            || text.Contains(" for beginners", StringComparison.Ordinal);
+
+        if (!hasCue)
+        {
+            return false;
+        }
+
+        filterValue = McpDifficultyLevel.ToFilterValue(level)!;
+        return true;
     }
 }

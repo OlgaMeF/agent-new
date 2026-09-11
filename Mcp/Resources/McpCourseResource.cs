@@ -88,6 +88,7 @@ public class McpCourseResource
             ExternalCourseId: string.IsNullOrWhiteSpace(course.ExternalCourseId) ? null : course.ExternalCourseId,
             Instructor: string.IsNullOrWhiteSpace(course.Instructor) ? null : course.Instructor,
             DurationInHours: string.IsNullOrWhiteSpace(course.DurationInHours) ? null : course.DurationInHours,
+            DifficultyLevel: McpDifficultyLevel.ToWireValue(course.DifficultyLevel),
             ClusterId: string.IsNullOrWhiteSpace(course.ClusterId) ? null : course.ClusterId,
             ClusterName: string.IsNullOrWhiteSpace(course.ClusterName) ? null : course.ClusterName,
             SubClusterId: string.IsNullOrWhiteSpace(course.SubClusterId) ? null : course.SubClusterId,

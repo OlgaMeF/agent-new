@@ -551,6 +551,7 @@ public partial class AgentService
         string? Objectives,
         string? DeepLink,
         string? Requirement,
+        string? DifficultyLevel,
         bool IsActive,
         bool HasDetail);
 

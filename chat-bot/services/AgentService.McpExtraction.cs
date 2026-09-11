@@ -70,6 +70,10 @@ public partial class AgentService
                     : null,
                 DeepLink: deepLink,
                 Requirement: ExtractRequirement(element),
+                DifficultyLevel: TryGetString(element, out var difficulty,
+                                      "difficultyLevel", "DifficultyLevel")
+                    ? difficulty
+                    : null,
                 IsActive: TryGetBool(element, "isActive", "IsActive") ?? true,
                 HasDetail: false));
         }
@@ -122,6 +126,10 @@ public partial class AgentService
                     Objectives: null,
                     DeepLink: courseLink,
                     Requirement: ExtractRequirement(courseElement),
+                    DifficultyLevel: TryGetString(courseElement, out var cDifficulty,
+                                          "difficultyLevel", "DifficultyLevel")
+                        ? cDifficulty
+                        : null,
                     IsActive: TryGetBool(courseElement, "isActive", "IsActive") ?? true,
                     HasDetail: false));
             }
@@ -369,6 +377,7 @@ public partial class AgentService
             "ssoTrainingUrl", "SsoTrainingUrl",
             "clusterName", "ClusterName",
             "childTagName", "ChildTagName",
+            "difficultyLevel", "DifficultyLevel",
             "requirementType", "RequirementType",
             "progressPercentage", "ProgressPercentage",
             "courseId", "CourseId");
