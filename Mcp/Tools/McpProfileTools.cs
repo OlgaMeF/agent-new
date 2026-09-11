@@ -1,4 +1,5 @@
 using MB.ComTools.Apps.Data;
+using MB.ComTools.Apps.Setup.Mcp;
 using MB.ComTools.Apps.Setup.Mcp.Dtos;
 using MB.Core.Types;
 using MB.Core.Types.Learning;
