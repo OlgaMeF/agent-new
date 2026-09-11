@@ -291,8 +291,7 @@ public class McpProfileTools
                     0 => null,
                     1 => exactMatches[0],
                     _ => throw new InvalidOperationException(
-                        "ambiguous",
-                        $"Skill '{skillName}' matches multiple tags: "
+                        $"[ambiguous] Skill '{skillName}' matches multiple tags: "
                         + string.Join(", ", exactMatches.Select(t => t.BaseEntryId)))
                 };
 
@@ -309,8 +308,7 @@ public class McpProfileTools
                         0 => null,
                         1 => partialMatches[0],
                         _ => throw new InvalidOperationException(
-                            "ambiguous",
-                            $"Skill '{skillName}' matches multiple tags: "
+                            $"[ambiguous] Skill '{skillName}' matches multiple tags: "
                             + string.Join(", ", partialMatches.Select(t => t.BaseEntryId)))
                     };
                 }
