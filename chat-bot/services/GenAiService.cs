@@ -1,13 +1,14 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using System.Threading;
 
 namespace MB.ComTools.Apps.Content.Services;
 
 /// <summary>
-/// OpenAI-compatible chat client. Supports plain completions and native tool calling
-/// (<c>tools</c> / <c>tool_call</c> or <c>tool_calls</c>) used by the agent router.
+/// OpenAI-compatible chat client. Plain completions are the default path.
+/// Native tool calling (<c>tools</c> / <c>tool_choice</c>) is opt-in via
+/// <c>GenAi:EnableToolChoice</c> — current Llama deployments reject tool_choice
+/// with HTTP 422 <c>capability_not_supported</c>.
 /// </summary>
 public class GenAiService
 {
@@ -22,16 +23,6 @@ public class GenAiService
     private readonly ILogger<GenAiService> _logger;
     private string? _cachedModel;
 
-    /// <summary>
-    /// Some Llama deployments reject <c>tool_choice</c> with HTTP 422
-    /// (<c>capability_not_supported</c>). After the first failure we skip native
-    /// tool calling and use JSON-in-content routing instead.
-    /// Must be static: <see cref="GenAiService"/> is registered via
-    /// <c>AddHttpClient&lt;GenAiService&gt;</c> (transient), so an instance field
-    /// would reset on every chat turn and re-pay the 422 each time.
-    /// </summary>
-    private static int _toolChoiceUnsupported;
-
     public GenAiService(
         HttpClient httpClient,
         IConfiguration configuration,
@@ -43,10 +34,15 @@ public class GenAiService
     }
 
     /// <summary>
-    /// False once the gateway reported that <c>tool_choice</c> is not supported.
+    /// True only when explicitly enabled in config. Default false because the
+    /// deployed Llama model does not support <c>tool_choice</c>.
     /// </summary>
     public bool SupportsToolChoice =>
-        Interlocked.CompareExchange(ref _toolChoiceUnsupported, 0, 0) == 0;
+        IsTruthy(GetConfigValue("GenAi:EnableToolChoice", "GenAi:enable_tool_choice"));
+
+    private static bool IsTruthy(string? value) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.Trim() is "1" or "true" or "True" or "TRUE" or "yes" or "on";
 
     /// <summary>
     /// Plain text completion. Used for answer prose when no tools are needed.
@@ -143,15 +139,6 @@ public class GenAiService
 
             if (!response.IsSuccessStatusCode)
             {
-                if (IsToolChoiceUnsupportedError(response.StatusCode, responseBody))
-                {
-                    if (Interlocked.Exchange(ref _toolChoiceUnsupported, 1) == 0)
-                    {
-                        _logger.LogWarning(
-                            "GenAI model does not support tool_choice; switching to JSON-content routing.");
-                    }
-                }
-
                 _logger.LogWarning(
                     "GenAI completion failed status={StatusCode} bodyLength={Length}",
                     (int)response.StatusCode,
@@ -227,10 +214,12 @@ public class GenAiService
         }).ToArray();
 
         // Routing must be deterministic: low temperature reduces invented queries /
-        // malformed tool JSON with Llama 3.1-class models.
+        // malformed JSON with Llama 3.1-class models.
         const double temperature = 0;
 
-        // Gateway rejected tool_choice earlier — never send tools/tool_choice again.
+        // Default: no tools / no tool_choice. The deployed model returns 422
+        // capability_not_supported for tool_choice — so we never send it unless
+        // GenAi:EnableToolChoice is explicitly true.
         if (!SupportsToolChoice || tools is null || tools.Count == 0)
         {
             return new
@@ -253,18 +242,29 @@ public class GenAiService
             }
         }).ToArray();
 
-        // tool_choice: "auto" | "none" | "required" | { type, function: { name } }
-        object resolvedChoice = string.IsNullOrWhiteSpace(toolChoice)
-            ? "auto"
-            : toolChoice.Trim().ToLowerInvariant() switch
+        // Opt-in only: still omit tool_choice if the caller left it null/empty,
+        // so gateways that accept tools but not tool_choice can work.
+        if (string.IsNullOrWhiteSpace(toolChoice))
+        {
+            return new
             {
-                "auto" or "none" or "required" => toolChoice.Trim().ToLowerInvariant(),
-                _ => new
-                {
-                    type = "function",
-                    function = new { name = toolChoice.Trim() }
-                }
+                model = modelName,
+                messages = messagePayload,
+                tools = toolPayload,
+                temperature,
+                stream = false
             };
+        }
+
+        object resolvedChoice = toolChoice.Trim().ToLowerInvariant() switch
+        {
+            "auto" or "none" or "required" => toolChoice.Trim().ToLowerInvariant(),
+            _ => new
+            {
+                type = "function",
+                function = new { name = toolChoice.Trim() }
+            }
+        };
 
         return new
         {
@@ -275,20 +275,6 @@ public class GenAiService
             temperature,
             stream = false
         };
-    }
-
-    private static bool IsToolChoiceUnsupportedError(
-        System.Net.HttpStatusCode statusCode,
-        string? responseBody)
-    {
-        if ((int)statusCode != 422 || string.IsNullOrWhiteSpace(responseBody))
-        {
-            return false;
-        }
-
-        return responseBody.Contains("tool_choice", StringComparison.OrdinalIgnoreCase)
-            && (responseBody.Contains("capability_not_supported", StringComparison.OrdinalIgnoreCase)
-                || responseBody.Contains("does not support", StringComparison.OrdinalIgnoreCase));
     }
 
     private static GenAiCompletionResult? ParseCompletion(string responseBody)

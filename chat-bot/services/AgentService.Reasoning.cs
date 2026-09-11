@@ -53,9 +53,9 @@ public partial class AgentService
         ReasoningResult? reasoning = null;
         GenAiCompletionResult? completion = null;
 
-        // Native tool calling only when the gateway accepts tool_choice.
-        // Llama deployments that return 422 capability_not_supported skip this
-        // and go straight to JSON-in-content (avoids two failed round-trips).
+        // Native tool calling is opt-in (GenAi:EnableToolChoice). The deployed
+        // Llama model rejects tool_choice with 422 — so the default path is
+        // JSON-in-content routing with no tools payload.
         if (_genAiService.SupportsToolChoice)
         {
             var messages = new List<GenAiChatMessage>
@@ -76,14 +76,13 @@ public partial class AgentService
                 && TryParseReasoningFromCompletion(
                     completion,
                     conversation.Language,
-                    out var parsed,
+                    out var toolParsed,
                     out path))
             {
-                reasoning = parsed;
+                reasoning = toolParsed;
             }
 
-            // Retry with auto only while tool_choice is still supported.
-            if (reasoning is null && _genAiService.SupportsToolChoice)
+            if (reasoning is null)
             {
                 completion = await _genAiService.CompleteAsync(
                     messages,
@@ -95,16 +94,15 @@ public partial class AgentService
                     && TryParseReasoningFromCompletion(
                         completion,
                         conversation.Language,
-                        out parsed,
+                        out toolParsed,
                         out path))
                 {
-                    reasoning = parsed;
+                    reasoning = toolParsed;
                     path = $"auto:{path}";
                 }
             }
         }
 
-        // JSON-in-content: primary path when tool_choice is unsupported, fallback otherwise.
         if (reasoning is null)
         {
             var jsonCompletion = await _genAiService.CompleteAsync(
