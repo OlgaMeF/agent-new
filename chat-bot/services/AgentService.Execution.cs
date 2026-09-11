@@ -29,7 +29,6 @@ public partial class AgentService
             return evidence;
         }
 
-        ApplyDifficultyArgs(plan, plan.FirstRound);
         await RunRoundAsync(plan.FirstRound, evidence, cancellationToken);
         _logger.LogInformation(
             "RESPONSE_EVIDENCE courses={Count}",
@@ -62,12 +61,12 @@ public partial class AgentService
                 "PHASE4_ROUND2 toolCalls={ToolCalls}",
                 DescribeToolCalls(secondRound));
 
-            ApplyDifficultyArgs(plan, secondRound);
             await RunRoundAsync(secondRound, evidence, cancellationToken);
 
         }
 
         FilterCourseSearchEvidence(plan, evidence, conversation);
+        PrioritizeCoursesByDifficulty(plan, evidence);
         FilterProfileCourseEvidence(plan, evidence);
         FocusSkills(plan, evidence);
 
@@ -716,13 +715,10 @@ private static List<ToolCallRequest> DeriveSecondRound(
         ToolCallRequest call,
         CancellationToken cancellationToken)
     {
-        call.Args.TryGetValue("difficultyLevel", out var difficultyLevel);
-
         var raw = await _mcpClientService.SearchCoursesAsync(
             query: call.Query,
             limit: DefaultSearchLimit,
             offset: 0,
-            difficultyLevel: difficultyLevel,
             cancellationToken: cancellationToken);
 
         var courses = ExtractCourses(raw);
@@ -1156,67 +1152,66 @@ private static List<ToolCallRequest> DeriveSecondRound(
     }
 
     /// <summary>
-    /// Copies difficulty from plan slots / user text onto search_courses Args so MCP
-    /// can filter Beginner / Intermediate / Expert without changing the topic query.
+    /// When the user asks for Anfänger / Fortgeschritten / Experte, reorder the
+    /// already-fetched catalogue hits so matching DIFFICULTY values come first.
+    /// Cards and GenAI both see this order; MCP itself stays an unfiltered topic search.
     /// </summary>
-    private static void ApplyDifficultyArgs(
-        ExecutionPlan plan,
-        IEnumerable<ToolCallRequest> calls)
+    private static void PrioritizeCoursesByDifficulty(ExecutionPlan plan, Evidence evidence)
     {
-        var difficulty = ResolveDifficultyLevelArg(plan.Slots, plan.UserMessage);
-
-        if (difficulty is null)
+        if (evidence.Courses.Count < 2
+            || !TryResolvePreferredDifficulty(plan, out var preferred))
         {
             return;
         }
 
-        foreach (var call in calls)
-        {
-            if (!call.Tool.Equals("search_courses", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
+        var ordered = evidence.Courses
+            .OrderByDescending(course => DifficultyMatchScore(course.DifficultyLevel, preferred))
+            .ThenByDescending(course => course.IsActive)
+            .ThenByDescending(course => IsRequired(course.Requirement))
+            .ToList();
 
-            if (!call.Args.ContainsKey("difficultyLevel"))
-            {
-                call.Args["difficultyLevel"] = difficulty;
-            }
-        }
+        evidence.Courses.Clear();
+        evidence.Courses.AddRange(ordered);
     }
 
-    private static string? ResolveDifficultyLevelArg(
-        IReadOnlyDictionary<string, string> slots,
-        string? userMessage)
+    private static bool TryResolvePreferredDifficulty(ExecutionPlan plan, out string preferred)
     {
-        if (slots.TryGetValue("difficultyLevel", out var fromSlot))
-        {
-            var normalized = McpDifficultyLevel.NormalizeFilter(fromSlot);
+        preferred = string.Empty;
 
-            if (normalized is not null)
-            {
-                return normalized;
-            }
-        }
-
-        if (slots.TryGetValue("audience", out var audience))
+        if (plan.Slots.TryGetValue("audience", out var audience))
         {
             var fromAudience = McpDifficultyLevel.NormalizeFilter(audience);
 
-            // Audience is Beginner/Intermediate/Expert only — never Unset.
             if (fromAudience is not null
                 && !fromAudience.Equals(McpDifficultyLevel.Unset, StringComparison.OrdinalIgnoreCase))
             {
-                return fromAudience;
+                preferred = fromAudience;
+                return true;
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(userMessage)
-            && TryInferDifficultyLevel(userMessage, out var inferred))
+        return TryInferDifficultyLevel(plan.UserMessage, out preferred);
+    }
+
+    private static int DifficultyMatchScore(string? courseLevel, string preferred)
+    {
+        if (!McpDifficultyLevel.TryParse(courseLevel, out var actual) || actual == 0)
         {
-            return inferred;
+            return 0;
         }
 
-        return null;
+        if (!McpDifficultyLevel.TryParse(preferred, out var wanted) || wanted == 0)
+        {
+            return 0;
+        }
+
+        if (actual == wanted)
+        {
+            return 2;
+        }
+
+        // Near miss (Beginner↔Intermediate or Intermediate↔Expert) still ranks above unset.
+        return Math.Abs(actual - wanted) == 1 ? 1 : 0;
     }
 
     private static bool TryInferDifficultyLevel(string message, out string filterValue)
@@ -1228,14 +1223,11 @@ private static List<ToolCallRequest> DeriveSecondRound(
             return false;
         }
 
-        // Prefer explicit niveau phrases over bare words like "advanced".
         if (!McpDifficultyLevel.TryParse(message, out var level) || level == 0)
         {
             return false;
         }
 
-        // Avoid matching "advanced" inside unrelated compound words by requiring
-        // a clear difficulty cue in German or English.
         var text = message.ToLowerInvariant()
             .Replace("ä", "ae", StringComparison.Ordinal)
             .Replace("ö", "oe", StringComparison.Ordinal)

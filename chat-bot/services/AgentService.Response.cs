@@ -227,8 +227,12 @@ public partial class AgentService
               carries its own short description.
             - Skip every sentence that carries no information, such as "here are the
               results" or "I found the following courses".
-            - Only state a level such as "for beginners" when the data says so. Never
-              infer it.
+            - Only state a level such as "for beginners" when a course DIFFICULTY / Niveau
+              field in DATA says so. Never invent a level.
+            - If the user asked for Anfänger/Beginner, Fortgeschritten/Intermediate or
+              Experte/Expert, prefer courses whose DIFFICULTY matches. Cards are already
+              ordered with matching levels first — briefly acknowledge that fit in prose
+              when DATA supports it, without listing every card.
             - No headings and no bullet lists, unless the data is a hierarchy.
             - Never mention tools, data sources, ranking, filtering or your own reasoning.
             - If the data only partially answers the question, say so plainly in one sentence.

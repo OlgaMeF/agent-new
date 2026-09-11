@@ -1,6 +1,5 @@
 using System.Text.RegularExpressions;
 using MB.ComTools.Apps.Content.Services.Agent;
-using MB.ComTools.Apps.Setup.Mcp.Dtos;
 
 namespace MB.ComTools.Apps.Content.Services;
 
@@ -640,13 +639,6 @@ public partial class AgentService
     if (!string.IsNullOrWhiteSpace(audience))
     {
         slots["audience"] = audience;
-        var difficulty = McpDifficultyLevel.NormalizeFilter(audience);
-
-        if (difficulty is not null
-            && !difficulty.Equals(McpDifficultyLevel.Unset, StringComparison.OrdinalIgnoreCase))
-        {
-            slots["difficultyLevel"] = difficulty;
-        }
     }
 
     return new ReasoningResult(

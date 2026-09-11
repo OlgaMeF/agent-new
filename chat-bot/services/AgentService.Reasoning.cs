@@ -257,28 +257,6 @@ public partial class AgentService
                                             ["type"] = "string",
                                             ["description"] =
                                                 "Topic/keyword extracted from the current user message."
-                                        },
-                                    ["difficultyLevel"] =
-                                        new Dictionary<string, object?>
-                                        {
-                                            ["type"] = "string",
-                                            ["description"] =
-                                                "Optional course difficulty from the current message: Beginner, Intermediate, Expert (or German Anfänger/Fortgeschritten/Experte).",
-                                            ["enum"] = new[]
-                                            {
-                                                "Beginner",
-                                                "Intermediate",
-                                                "Expert",
-                                                "Unset",
-                                                ""
-                                            }
-                                        },
-                                    ["audience"] =
-                                        new Dictionary<string, object?>
-                                        {
-                                            ["type"] = "string",
-                                            ["description"] =
-                                                "Optional audience synonym for difficulty (e.g. beginner)."
                                         }
                                 }
                         },
@@ -364,7 +342,7 @@ public partial class AgentService
         - Put the explicit subject/keyword from the CURRENT message into toolCalls[].query AND slots.topic.
         - Strip request phrases ("zeige mir", "finde", "suche", "welche gibt es", "I am looking for").
         - Strip entity words ("Kurse", "Courses", "Profile", "Profiles", "Skills") and normalize compounds ("Kommunikationskurse" → "Kommunikation").
-        - If the user asks for a difficulty (Anfänger/Beginner, Fortgeschritten/Intermediate, Experte/Expert), put it into slots.difficultyLevel and strip it from query/topic.
+        - Difficulty words (Anfänger/Beginner, Fortgeschritten, Experte) are NOT the search topic — keep only the subject in query (e.g. "Python-Kurse für Anfänger" → query="Python"). Ranking by level happens later from course data.
         - Empty query ONLY when: no-arg tool, positional ref (ref≠none), or true catalogue overview ("alle Kurse", "which profiles exist").
         - Never invent values. Never use "none", "null", "N/A" as query.
         - ref is "none" unless the user points at a remembered card.
@@ -383,7 +361,7 @@ public partial class AgentService
           toolCalls=[{tool:"search_courses", query:"Python", ref:"none"}]
 
         User: "Python-Kurse für Anfänger"
-        → intent=course_search, language=de, slots.topic="Python", slots.difficultyLevel="Beginner",
+        → intent=course_search, language=de, slots.topic="Python",
           toolCalls=[{tool:"search_courses", query:"Python", ref:"none"}]
 
         User: "Ich bin Softwareentwickler und möchte Product Owner werden"
@@ -412,7 +390,7 @@ public partial class AgentService
           "intent": "<one of: course_search|course_details|course_compare|skill_search|skill_details|skill_courses|profile_search|profile_details|profile_courses|learning_path|learning_recommendation|division_overview|collections|bookmarks|progress|capabilities|smalltalk|out_of_scope|clarify>",
           "language": "de|en",
           "clarificationQuestion": "",
-          "slots": { "topic": "", "currentProfile": "", "targetProfile": "", "division": "", "difficultyLevel": "" },
+          "slots": { "topic": "", "currentProfile": "", "targetProfile": "", "division": "" },
           "toolCalls": [ { "tool": "<mcp tool name>", "query": "<subject or empty>", "ref": "none" } ]
         }
 
@@ -422,14 +400,13 @@ public partial class AgentService
           slots.currentProfile=X, slots.targetProfile=Y,
           toolCalls=[{tool:"get_profile_skills", query:Y, ref:"none"}] (and optionally one for X).
         - If the user named a topic/subject, query AND slots.topic MUST contain it (never empty).
-        - If the user asks for difficulty (Anfänger/Beginner, Fortgeschritten/Intermediate, Experte/Expert),
-          set slots.difficultyLevel accordingly and keep topic free of that word.
+        - Difficulty words (Anfänger/Beginner, …) are not the topic — keep only the subject in query.
         - Empty toolCalls only for capabilities, smalltalk, out_of_scope, clarify.
         - Valid tools: search_courses, get_course, get_courses_by_tag, search_skills, get_skill, search_profiles, get_profile, get_profile_skills, get_divisions, search_collections, get_my_bookmarks, get_my_progress.
         - Example: "Welche Kurse gibt es zu Python?" →
           {"intent":"course_search","language":"de","slots":{"topic":"Python"},"toolCalls":[{"tool":"search_courses","query":"Python","ref":"none"}]}
         - Example: "Python-Kurse für Anfänger" →
-          {"intent":"course_search","language":"de","slots":{"topic":"Python","difficultyLevel":"Beginner"},"toolCalls":[{"tool":"search_courses","query":"Python","ref":"none"}]}
+          {"intent":"course_search","language":"de","slots":{"topic":"Python"},"toolCalls":[{"tool":"search_courses","query":"Python","ref":"none"}]}
         - Example: "Ich bin Softwareentwickler und möchte Product Owner werden." →
           {"intent":"learning_recommendation","language":"de","slots":{"currentProfile":"Softwareentwickler","targetProfile":"Product Owner"},"toolCalls":[{"tool":"get_profile_skills","query":"Product Owner","ref":"none"}]}
         """;
@@ -1758,41 +1735,7 @@ public partial class AgentService
             resolved.Add(new ToolCallRequest("get_divisions", string.Empty, ReferenceType.None));
         }
 
-        EnsureDifficultySlot(reasoning, userMessage);
-
         return reasoning with { ToolCalls = resolved };
-    }
-
-    private static void EnsureDifficultySlot(ReasoningResult reasoning, string userMessage)
-    {
-        if (reasoning.Slots.TryGetValue("difficultyLevel", out var existing))
-        {
-            var normalizedExisting = McpDifficultyLevel.NormalizeFilter(existing);
-
-            if (normalizedExisting is not null)
-            {
-                reasoning.Slots["difficultyLevel"] = normalizedExisting;
-            }
-
-            return;
-        }
-
-        if (reasoning.Slots.TryGetValue("audience", out var audience))
-        {
-            var fromAudience = McpDifficultyLevel.NormalizeFilter(audience);
-
-            if (fromAudience is not null
-                && !fromAudience.Equals(McpDifficultyLevel.Unset, StringComparison.OrdinalIgnoreCase))
-            {
-                reasoning.Slots["difficultyLevel"] = fromAudience;
-                return;
-            }
-        }
-
-        if (TryInferDifficultyLevel(userMessage, out var inferred))
-        {
-            reasoning.Slots["difficultyLevel"] = inferred;
-        }
     }
 
     private static bool LooksLikeProfileSearchRequest(string message) =>

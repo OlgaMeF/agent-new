@@ -36,13 +36,11 @@ public class McpCourseTools
     /// Search published LearnCourses with flexible filters.
     /// Supports filtering by query text, platform, cluster, and pagination.
     /// </summary>
-    [McpServerTool, Description("Search active published courses on the learn-skills platform. Filter by text query, platform (e.g. 'LinkedIn Learning'), cluster name, or difficulty level (Beginner, Intermediate, Expert). Returns paginated course card summaries with title, instructor, duration, difficulty, platform, and deep link.")]
+    [McpServerTool, Description("Search active published courses on the learn-skills platform. Filter by text query, platform (e.g. 'LinkedIn Learning'), or cluster name. Returns paginated course card summaries with title, instructor, duration, difficulty level when set, platform, and deep link.")]
     public async Task<McpCourseListResponse> search_courses(
         string? query = null,
         string? platform = null,
         string? clusterName = null,
-        [Description("Optional difficulty filter: Beginner, Intermediate, Expert (or German Anfänger/Fortgeschritten/Experte). Omit to include all levels.")]
-        string? difficultyLevel = null,
         int limit = 50,
         int offset = 0,
         CancellationToken cancellationToken = default)
@@ -59,7 +57,7 @@ public class McpCourseTools
         limit = Math.Clamp(limit, 1, 500);
         offset = Math.Max(offset, 0);
 
-        var cacheKey = $"courses:search:{McpCacheService.HashParams(new { query, platform, clusterName, difficultyLevel, limit, offset })}";
+        var cacheKey = $"courses:search:{McpCacheService.HashParams(new { query, platform, clusterName, limit, offset })}";
         return await _cache.GetOrCreateAsync(
             cacheKey,
             "courses",
@@ -95,12 +93,6 @@ public class McpCourseTools
                 if (!string.IsNullOrWhiteSpace(clusterName))
                 {
                     baseQuery = baseQuery.Where(c => EF.Functions.ILike(c.ClusterName ?? "", $"%{clusterName}%"));
-                }
-
-                // Apply difficulty filter (integer enum on LearnCourse.DifficultyLevel).
-                if (McpDifficultyLevel.TryParse(difficultyLevel, out var difficultyValue))
-                {
-                    baseQuery = baseQuery.Where(c => (int)c.DifficultyLevel == difficultyValue);
                 }
 
                 var orderedQuery = !string.IsNullOrWhiteSpace(query)
