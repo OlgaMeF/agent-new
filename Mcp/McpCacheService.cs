@@ -39,13 +39,17 @@ public class McpCacheService
         var fullKey = $"mcp:{key}";
         var cts = GetCts(tokenName);
 
-        return await _cache.GetOrCreateAsync(fullKey, async entry =>
+        var cached = await _cache.GetOrCreateAsync(fullKey, async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(_options.CacheTtlMinutes);
             entry.AddExpirationToken(new Microsoft.Extensions.Primitives.CancellationChangeToken(cts.Token));
             entry.Size = 1; // Required when IMemoryCache is configured with SizeLimit
             return await factory();
         });
+
+        // IMemoryCache.GetOrCreateAsync can return null when the factory yields null;
+        // fall back to a fresh factory call so the non-nullable contract holds.
+        return cached ?? await factory();
     }
 
     /// <summary>

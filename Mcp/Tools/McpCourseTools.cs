@@ -80,8 +80,8 @@ public class McpCourseTools
                         EF.Functions.ILike(c.LmsTags ?? "", $"%{query}%") ||
                         EF.Functions.ILike(c.ClusterName ?? "", $"%{query}%") ||
                         EF.Functions.ILike(c.SubClusterName ?? "", $"%{query}%") ||
-                        EF.Functions.ILike(c.ParentTag.Name ?? "", $"%{query}%") ||
-                        EF.Functions.ILike(c.ChildTag.Name ?? "", $"%{query}%"));
+                        (c.ParentTag != null && EF.Functions.ILike(c.ParentTag.Name ?? "", $"%{query}%")) ||
+                        (c.ChildTag != null && EF.Functions.ILike(c.ChildTag.Name ?? "", $"%{query}%")));
                 }
 
                 // Apply platform filter (exact match)
