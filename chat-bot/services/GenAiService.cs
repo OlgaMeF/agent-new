@@ -179,7 +179,7 @@ public class GenAiService
         }
     }
 
-    private static object BuildPayload(
+    private object BuildPayload(
         string modelName,
         IReadOnlyList<GenAiChatMessage> messages,
         IReadOnlyList<GenAiToolDefinition>? tools,
