@@ -69,7 +69,7 @@ public partial class AgentService
                     ? objectives
                     : null,
                 DeepLink: deepLink,
-                Requirement: ExtractRequirement(element),
+                Requirement: null,
                 DifficultyLevel: TryGetString(element, out var difficulty,
                                       "difficultyLevel", "DifficultyLevel")
                     ? difficulty
@@ -125,7 +125,7 @@ public partial class AgentService
                     Instructor: null,
                     Objectives: null,
                     DeepLink: courseLink,
-                    Requirement: ExtractRequirement(courseElement),
+                    Requirement: null,
                     DifficultyLevel: TryGetString(courseElement, out var cDifficulty,
                                           "difficultyLevel", "DifficultyLevel")
                         ? cDifficulty
@@ -135,18 +135,6 @@ public partial class AgentService
             }
 
             courses = Distinct(courses, c => c.Id ?? c.Title);
-
-            var required = TryGetInt(element,
-                               "requiredCoursesCount", "RequiredCoursesCount",
-                               "requiredCourseCount", "RequiredCourseCount",
-                               "requiredCount", "RequiredCount")
-                           ?? courses.Count(c => IsRequired(c.Requirement));
-
-            var optional = TryGetInt(element,
-                               "optionalCoursesCount", "OptionalCoursesCount",
-                               "optionalCourseCount", "OptionalCourseCount",
-                               "optionalCount", "OptionalCount")
-                           ?? courses.Count(c => c.Requirement is not null && !IsRequired(c.Requirement));
 
             result.Add(new ProfileInfo(
                 Id: TryGetString(element, out var id, "id", "Id", "profileId", "ProfileId", "baseEntryId", "BaseEntryId")
@@ -162,8 +150,8 @@ public partial class AgentService
                 Department: TryGetString(element, out var department, "departmentName", "DepartmentName", "department", "Department")
                     ? department
                     : null,
-                RequiredCount: required,
-                OptionalCount: optional,
+                RequiredCount: 0,
+                OptionalCount: 0,
                 DeepLink: deepLink,
                 Courses: courses));
         }
@@ -227,8 +215,8 @@ public partial class AgentService
                 Children: children,
                 CourseCount: courseCount ?? 0)
             {
-                RequiredCount = TryGetInt(element, "requiredCount", "RequiredCount") ?? 0,
-                OptionalCount = TryGetInt(element, "optionalCount", "OptionalCount") ?? 0
+                RequiredCount = 0,
+                OptionalCount = 0
             });
         }
 
@@ -318,43 +306,6 @@ public partial class AgentService
         return root.ValueKind == JsonValueKind.Object
                && TryGetString(root, out var error, "error", "Error")
                && error!.Contains("auth", StringComparison.OrdinalIgnoreCase);
-    }
-
-    // A course assignment carries its requirement as Required, Optional,
-    // Recommended or Assigned, so it cannot be reduced to a boolean.
-    private static string? ExtractRequirement(JsonElement element)
-    {
-        if (TryGetString(element, out var requirement, "requirementType", "RequirementType"))
-        {
-            return requirement;
-        }
-
-        return TryGetBool(element, "isMandatory", "IsMandatory", "isRequired", "IsRequired") switch
-        {
-            true => "Required",
-            false => "Optional",
-            _ => null
-        };
-    }
-
-    private static bool IsRequired(string? requirement) =>
-        string.Equals(requirement, "Required", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(requirement, "Mandatory", StringComparison.OrdinalIgnoreCase);
-
-    private static string? RequirementBadge(string? requirement, string? language)
-    {
-        if (string.IsNullOrWhiteSpace(requirement))
-        {
-            return null;
-        }
-
-        return requirement.ToLowerInvariant() switch
-        {
-            "required" or "mandatory" => Localize(language, "Pflichtkurs", "Mandatory"),
-            "optional" => Localize(language, "Optional", "Optional"),
-            "recommended" => Localize(language, "Empfohlen", "Recommended"),
-            _ => null
-        };
     }
 
     // Course assignments inside a profile and bookmarked courses use courseTitle

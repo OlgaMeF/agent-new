@@ -64,10 +64,8 @@ public class McpProfileResource
                     .Select(p => new
                     {
                         Profile = p,
-                        RequiredCount = _context.LearnProfileCourseAssignments
-                            .Count(ca => ca.ProfileId == p.BaseEntryId && ca.RequirementType == CourseRequirementType.Mandatory),
-                        OptionalCount = _context.LearnProfileCourseAssignments
-                            .Count(ca => ca.ProfileId == p.BaseEntryId && ca.RequirementType == CourseRequirementType.Optional)
+                        CourseCount = _context.LearnProfileCourseAssignments
+                            .Count(ca => ca.ProfileId == p.BaseEntryId)
                     })
                     .ToListAsync(cancellationToken);
 
@@ -110,9 +108,9 @@ public class McpProfileResource
                         DivisionName: dept?.DivisionName,
                         DepartmentId: p.Profile.DepartmentId,
                         DepartmentName: dept?.Title ?? p.Profile.DeptName,
-                        TotalCourses: p.Profile.TotalCourses,
-                        RequiredCoursesCount: p.RequiredCount,
-                        OptionalCoursesCount: p.OptionalCount,
+                        TotalCourses: p.CourseCount > 0 ? p.CourseCount : p.Profile.TotalCourses,
+                        RequiredCoursesCount: 0,
+                        OptionalCoursesCount: 0,
                         TeaserImageUrl: GetImageUrl(p.Profile.TeaserImageName, httpContext),
                         DeepLink: BuildDeepLink($"/learn-skills/profile/view/{p.Profile.BaseEntryId}", httpContext)
                     );

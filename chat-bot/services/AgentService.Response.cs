@@ -71,14 +71,16 @@ public partial class AgentService
         builder.Append(prose);
 
         var rendered = AppendCards(builder, plan, evidence);
-        var suggestions = BuildSuggestionList(plan, evidence, language);
+        var suggestions = BuildSuggestionList(plan, evidence, language)
+            .Take(1)
+            .ToList();
         AppendSuggestionBlock(builder, suggestions);
 
         return new AnswerResult(builder.ToString().Trim(), rendered.Count, prose)
         {
             Rendered = rendered,
             StructuredCards = rendered.StructuredCards.ToList(),
-            StructuredSuggestions = suggestions.ToList()
+            StructuredSuggestions = suggestions
         };
     }
 
@@ -317,7 +319,7 @@ public partial class AgentService
 
         cleaned = Regex.Replace(
             cleaned,
-            @"^\s*(TITLE|DESCRIPTION|PLATFORM|DURATION|URL|CATEGORY|DIVISION|REQUIRED|OPTIONAL|ITEMS|PARENT|CHILDREN|COURSES):.*$",
+            @"^\s*(TITLE|DESCRIPTION|PLATFORM|DURATION|URL|CATEGORY|DIVISION|ITEMS|PARENT|CHILDREN|COURSES):.*$",
             string.Empty,
             RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
@@ -399,7 +401,6 @@ public partial class AgentService
                 AppendField(builder, "Platform", course.Platform);
                 AppendField(builder, "Duration (hours)", course.Duration);
                 AppendField(builder, "Category", course.Category);
-                AppendField(builder, "Requirement", course.Requirement);
                 AppendField(builder, "Summary", Truncate(course.Summary, detailed ? 600 : 220));
 
                 if (detailed)
@@ -421,8 +422,6 @@ public partial class AgentService
                 builder.AppendLine($"[{index + 1}] {profile.Title}");
                 AppendField(builder, "Division", profile.Division);
                 AppendField(builder, "Department", profile.Department);
-                AppendField(builder, "Mandatory courses", profile.RequiredCount > 0 ? profile.RequiredCount.ToString() : null);
-                AppendField(builder, "Optional courses", profile.OptionalCount > 0 ? profile.OptionalCount.ToString() : null);
                 AppendField(builder, "Summary", Truncate(profile.Summary, 300));
             }
 
@@ -513,7 +512,7 @@ public partial class AgentService
             - show details of a single course and compare several courses
             - explain skills, skill categories and the skill hierarchy
             - show which courses train a given skill
-            - find learning profiles (job roles), their skills and their mandatory and optional courses
+            - find learning profiles (job roles), their skills and related courses
             - derive a learning path from a current role towards a target role
             - list divisions and departments
             - show curated collections and the user's own bookmarks
@@ -593,18 +592,14 @@ public partial class AgentService
                 "- Alternatively: which topic or skill are you interested in?"));
 
             AppendSuggestionBlock(builder, Localize(language,
-                ["Ich bin Product Owner und möchte Scrum Master werden",
-                 "Zeige mir alle Lernprofile",
-                 "Welche Skill-Kategorien gibt es?"],
-                ["I am a Product Owner and want to become a Scrum Master",
-                 "Show me all learning profiles",
-                 "Which skill categories exist?"]));
+                ["Ich bin Product Owner und möchte Scrum Master werden"],
+                ["I am a Product Owner and want to become a Scrum Master"]));
         }
         else if (asksForCardSelection)
         {
             AppendSuggestionBlock(builder, Localize(language,
-                ["Die erste", "Die zweite", "Die dritte"],
-                ["The first one", "The second one", "The third one"]));
+                ["Die erste"],
+                ["The first one"]));
         }
 
         var pendingSlot = asksForTargetProfile
@@ -658,8 +653,8 @@ public partial class AgentService
             {
                 var builder = new StringBuilder(prose.Trim());
                 AppendSuggestionBlock(builder, Localize(language,
-                    ["Welche Kurse gibt es zu GenAI?", "Zeige mir Skill-Kategorien", "Welche Lernprofile gibt es?"],
-                    ["Which GenAI courses exist?", "Show skill categories", "Which learning profiles exist?"]));
+                    ["Welche Kurse gibt es zu GenAI?"],
+                    ["Which GenAI courses exist?"]));
 
                 return new AnswerResult(builder.ToString().Trim(), 0, prose.Trim());
             }
@@ -730,8 +725,8 @@ public partial class AgentService
             "Try a broader term, or let me show you the skill categories and learning profiles."));
 
         AppendSuggestionBlock(builder, Localize(language,
-            ["Welche Skill-Kategorien gibt es?", "Zeige mir alle Lernprofile", "Welche Bereiche gibt es?"],
-            ["Which skill categories exist?", "Show me all learning profiles", "Which divisions exist?"]));
+            ["Welche Skill-Kategorien gibt es?"],
+            ["Which skill categories exist?"]));
 
         return new AnswerResult(builder.ToString().Trim(), 0, message);
     }
@@ -840,8 +835,6 @@ public partial class AgentService
                     AppendCardField(builder, "DESCRIPTION", Truncate(profile.Summary, 220));
                 }
                 AppendCardField(builder, "DIVISION", profile.Division ?? profile.Department);
-                AppendCardField(builder, "REQUIRED", profile.RequiredCount > 0 ? profile.RequiredCount.ToString() : null);
-                AppendCardField(builder, "OPTIONAL", profile.OptionalCount > 0 ? profile.OptionalCount.ToString() : null);
                 if (plan.Intent == AgentIntent.ProfileDetails && evidence.Skills.Count > 0)
                 {
                     AppendCardField(builder, "CHILDREN",
@@ -860,7 +853,6 @@ public partial class AgentService
         {
             var courses = evidence.Courses
                 .OrderByDescending(c => c.IsActive)
-                .ThenByDescending(c => IsRequired(c.Requirement))
                 .Take(limit);
 
             foreach (var course in courses)
@@ -959,16 +951,6 @@ public partial class AgentService
         if (!string.IsNullOrWhiteSpace(division))
         {
             facts.Add(new ChatFactDto { Label = "Bereich", Value = division });
-        }
-
-        if (profile.RequiredCount > 0)
-        {
-            facts.Add(new ChatFactDto { Label = "Pflichtkurse", Value = profile.RequiredCount.ToString() });
-        }
-
-        if (profile.OptionalCount > 0)
-        {
-            facts.Add(new ChatFactDto { Label = "Optionale Kurse", Value = profile.OptionalCount.ToString() });
         }
 
         var chips = plan.Intent == AgentIntent.ProfileDetails
@@ -1114,40 +1096,40 @@ public partial class AgentService
                 CourseSuggestions(evidence, language),
 
             AgentIntent.CourseDetails => Localize(language,
-                ["Gibt es ähnliche Kurse?", "Welche Skills deckt der Kurs ab?", "Für welche Profile ist der Kurs relevant?"],
-                ["Are there similar courses?", "Which skills does this course cover?", "Which profiles need this course?"]),
+                ["Gibt es ähnliche Kurse?"],
+                ["Are there similar courses?"]),
 
             AgentIntent.CourseCompare => Localize(language,
-                ["Welcher passt für Einsteiger?", "Zeig mir Details zum ersten Kurs", "Gibt es weitere Kurse dazu?"],
-                ["Which one suits beginners?", "Show me details of the first course", "Are there more courses on this?"]),
+                ["Welcher passt für Einsteiger?"],
+                ["Which one suits beginners?"]),
 
             AgentIntent.SkillSearch => SkillSearchSuggestions(plan, evidence, language),
 
             AgentIntent.SkillDetails => Localize(language,
-                ["Welche Kurse gibt es dazu?", "Welche verwandten Skills gibt es?", "Welche Profile brauchen diesen Skill?"],
-                ["Which courses train this?", "Which related skills exist?", "Which profiles need this skill?"]),
+                ["Welche Kurse gibt es dazu?"],
+                ["Which courses train this?"]),
 
             AgentIntent.ProfileSearch => ProfileSearchSuggestions(evidence, language),
 
             AgentIntent.ProfileDetails => Localize(language,
-                ["Welche Kurse gehören dazu?", "Zeige nur die Pflichtkurse", "Wie komme ich zu diesem Profil?"],
-                ["Which courses belong to it?", "Show only the mandatory courses", "How do I get to this profile?"]),
+                ["Welche Kurse gehören dazu?"],
+                ["Which courses belong to it?"]),
 
             AgentIntent.ProfileCourses => ProfileCourseSuggestions(evidence, language),
 
             AgentIntent.LearningPath => Localize(language,
-                ["Womit sollte ich anfangen?", "Zeige nur die Pflichtkurse", "Welche Skills fehlen mir dafür?"],
-                ["Where should I start?", "Show only the mandatory courses", "Which skills am I missing?"]),
+                ["Womit sollte ich anfangen?"],
+                ["Where should I start?"]),
 
             AgentIntent.DivisionOverview => Localize(language,
-                ["Welche Profile gibt es in diesem Bereich?", "Welche Skills sind hier wichtig?", "Zeige Kurse aus diesem Bereich"],
-                ["Which profiles exist in this division?", "Which skills matter here?", "Show courses from this division"]),
+                ["Welche Profile gibt es in diesem Bereich?"],
+                ["Which profiles exist in this division?"]),
 
             AgentIntent.Collections => CollectionSuggestions(evidence, language),
 
             AgentIntent.Capabilities or AgentIntent.SmallTalk or AgentIntent.OutOfScope => Localize(language,
-                ["Welche Kurse gibt es zu Projektmanagement?", "Welche Skills braucht ein Product Owner?", "Welche Skill-Kategorien gibt es?"],
-                ["Which courses are there on project management?", "Which skills does a Product Owner need?", "Which skill categories exist?"]),
+                ["Welche Kurse gibt es zu Projektmanagement?"],
+                ["Which courses are there on project management?"]),
 
             _ => Array.Empty<string>()
         };
@@ -1159,19 +1141,9 @@ public partial class AgentService
             return Array.Empty<string>();
         }
 
-        var suggestions = Localize(language,
-            ["Erzähl mir mehr über den ersten Kurs", "Welche Skills brauche ich dafür?"],
-            ["Tell me more about the first course", "Which skills do I need for this?"])
-            .ToList();
-
-        if (evidence.Courses.Count >= 2)
-        {
-            suggestions.Insert(1, Localize(language,
-                "Vergleiche die ersten zwei Kurse",
-                "Compare the first two courses"));
-        }
-
-        return suggestions.ToArray();
+        return Localize(language,
+            ["Erzähl mir mehr über den ersten Kurs"],
+            ["Tell me more about the first course"]);
     }
 
     private static string[] SkillSearchSuggestions(
@@ -1183,22 +1155,22 @@ public partial class AgentService
 
         return namedSkill is not null
             ? Localize(language,
-                ["Welche Kurse gibt es zu diesem Skill?", "Zeige die Unter-Skills", "Welche Profile brauchen diesen Skill?"],
-                ["Which courses train this skill?", "Show the sub-skills", "Which profiles need this skill?"])
+                ["Welche Kurse gibt es zu diesem Skill?"],
+                ["Which courses train this skill?"])
             : Localize(language,
-                ["Erkläre mir einen bestimmten Skill", "Zeige die Unter-Skills einer Kategorie", "Welche Profile passen zu diesen Skills?"],
-                ["Explain a specific skill", "Show the sub-skills of a category", "Which profiles match these skills?"]);
+                ["Erkläre mir einen bestimmten Skill"],
+                ["Explain a specific skill"]);
     }
 
     private static string[] ProfileSearchSuggestions(Evidence evidence, string language)
     {
         return evidence.Profiles.Count == 1
             ? Localize(language,
-                ["Welche Skills braucht dieses Profil?", "Welche Kurse gehören dazu?", "Zeige die Pflichtkurse"],
-                ["Which skills does this profile need?", "Which courses belong to it?", "Show the mandatory courses"])
+                ["Welche Skills braucht dieses Profil?"],
+                ["Which skills does this profile need?"])
             : Localize(language,
-                ["Zeige Details zum ersten Profil", "Welche Skills braucht dieses Profil?", "Welche Kurse gehören zu diesem Profil?"],
-                ["Show details for the first profile", "Which skills does this profile need?", "Which courses belong to this profile?"]);
+                ["Zeige Details zum ersten Profil"],
+                ["Show details for the first profile"]);
     }
 
     private static string[] ProfileCourseSuggestions(Evidence evidence, string language)
@@ -1206,8 +1178,8 @@ public partial class AgentService
         return evidence.Courses.Count == 0
             ? Array.Empty<string>()
             : Localize(language,
-                ["Zeige nur die Pflichtkurse", "Womit sollte ich anfangen?", "Wie lange dauert das insgesamt?"],
-                ["Show only the mandatory courses", "Where should I start?", "How long does this take in total?"]);
+                ["Erzähl mir mehr über den ersten Kurs"],
+                ["Tell me more about the first course"]);
     }
 
     private static string[] CollectionSuggestions(Evidence evidence, string language)
@@ -1215,8 +1187,8 @@ public partial class AgentService
         return evidence.Collections.Count == 0
             ? Array.Empty<string>()
             : Localize(language,
-                ["Zeige weitere Sammlungen", "Suche Sammlungen zu einem anderen Thema"],
-                ["Show more collections", "Search collections on another topic"]);
+                ["Suche Sammlungen zu einem anderen Thema"],
+                ["Search collections on another topic"]);
     }
 
     private static void AppendSuggestionBlock(StringBuilder builder, IReadOnlyList<string> suggestions)
@@ -1229,7 +1201,8 @@ public partial class AgentService
         builder.AppendLine();
         builder.AppendLine("[SUGGESTIONS]");
 
-        foreach (var suggestion in suggestions.Take(3))
+        // Platform UX: exactly one follow-up chip.
+        foreach (var suggestion in suggestions.Take(1))
         {
             builder.AppendLine(OneLine(suggestion));
         }

@@ -67,7 +67,6 @@ public partial class AgentService
 
         FilterCourseSearchEvidence(plan, evidence, conversation);
         PrioritizeCoursesByDifficulty(plan, evidence);
-        FilterProfileCourseEvidence(plan, evidence);
         FocusSkills(plan, evidence);
 
         return evidence;
@@ -188,41 +187,6 @@ public partial class AgentService
     private static string NormalizeSearchText(string? value) =>
         Regex.Replace(value?.ToLowerInvariant() ?? string.Empty, @"[^\p{L}\p{N}+#.-]+", " ");
 
-    private static void FilterProfileCourseEvidence(
-        ExecutionPlan plan,
-        Evidence evidence)
-    {
-        if (plan.Intent != AgentIntent.ProfileCourses)
-        {
-            return;
-        }
-
-        var message = plan.UserMessage;
-        var wantsRequired = message.Contains("pflicht", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("mandatory", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("required", StringComparison.OrdinalIgnoreCase);
-
-        var wantsOptional = message.Contains("optional", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("wahl", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("elective", StringComparison.OrdinalIgnoreCase);
-
-        if (wantsRequired && !wantsOptional)
-        {
-            evidence.Courses.RemoveAll(course => !IsRequired(course.Requirement));
-            return;
-        }
-
-        if (wantsOptional && !wantsRequired)
-        {
-            evidence.Courses.RemoveAll(course => IsRequired(course.Requirement));
-        }
-    }
-
-    /// <summary>
-    /// search_skills always answers with the complete taxonomy. When the user asked
-    /// about one skill, the answer has to be about that skill and its sub-skills
-    /// instead of every root category.
-    /// </summary>
     private static void FocusSkills(ExecutionPlan plan, Evidence evidence)
     {
         if (plan.Intent is not (AgentIntent.SkillSearch or AgentIntent.SkillDetails)
@@ -1167,7 +1131,6 @@ private static List<ToolCallRequest> DeriveSecondRound(
         var ordered = evidence.Courses
             .OrderByDescending(course => DifficultyMatchScore(course.DifficultyLevel, preferred))
             .ThenByDescending(course => course.IsActive)
-            .ThenByDescending(course => IsRequired(course.Requirement))
             .ToList();
 
         evidence.Courses.Clear();

@@ -736,8 +736,6 @@ const FACT_LABELS: Record<string, string> = {
   PLATFORM: "Plattform",
   DURATION: "Dauer",
   DIVISION: "Bereich",
-  REQUIRED: "Pflichtkurse",
-  OPTIONAL: "Optionale Kurse",
   ITEMS: "Inhalte",
   PARENT: "Oberkategorie",
   COURSES: "Kurse",

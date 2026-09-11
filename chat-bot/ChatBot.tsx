@@ -72,13 +72,9 @@ const serializeStructuredContent = (
             ? "DURATION"
             : fact.label === "Bereich"
               ? "DIVISION"
-              : fact.label === "Pflichtkurse"
-                ? "REQUIRED"
-                : fact.label === "Optionale Kurse"
-                  ? "OPTIONAL"
-                  : fact.label === "Inhalte"
-                    ? "ITEMS"
-                    : fact.label.toUpperCase();
+              : fact.label === "Inhalte"
+                ? "ITEMS"
+                : fact.label.toUpperCase();
       parts.push(`${key}: ${fact.value}`);
     }
     if (card.chips?.length) {

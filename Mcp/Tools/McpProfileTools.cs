@@ -103,10 +103,8 @@ public class McpProfileTools
                     .Select(p => new
                     {
                         Profile = p,
-                        RequiredCount = _context.LearnProfileCourseAssignments
-                            .Count(ca => ca.ProfileId == p.BaseEntryId && ca.RequirementType == CourseRequirementType.Mandatory),
-                        OptionalCount = _context.LearnProfileCourseAssignments
-                            .Count(ca => ca.ProfileId == p.BaseEntryId && ca.RequirementType == CourseRequirementType.Optional)
+                        CourseCount = _context.LearnProfileCourseAssignments
+                            .Count(ca => ca.ProfileId == p.BaseEntryId)
                     })
                     .ToListAsync(cancellationToken);
 
@@ -149,9 +147,9 @@ public class McpProfileTools
                         DivisionName: dept?.DivisionName,
                         DepartmentId: p.Profile.DepartmentId,
                         DepartmentName: dept?.Title ?? p.Profile.DeptName,
-                        TotalCourses: p.RequiredCount + p.OptionalCount,
-                        RequiredCoursesCount: p.RequiredCount,
-                        OptionalCoursesCount: p.OptionalCount,
+                        TotalCourses: p.CourseCount,
+                        RequiredCoursesCount: 0,
+                        OptionalCoursesCount: 0,
                         TeaserImageUrl: GetImageUrl(p.Profile.TeaserImageName, httpContext),
                         DeepLink: BuildDeepLink($"/learn-skills/profile/view/{p.Profile.BaseEntryId}", httpContext)
                     );
@@ -229,12 +227,12 @@ public class McpProfileTools
                     .OrderBy(g => g.Key)
                     .Select(g => new McpProfileCourseClusterGroupDto(
                         CourseClusterName: g.Key,
-                        RequiredCount: g.Count(a => a.RequirementType == CourseRequirementType.Mandatory),
-                        OptionalCount: g.Count(a => a.RequirementType == CourseRequirementType.Optional),
+                        RequiredCount: 0,
+                        OptionalCount: 0,
                         Courses: g.Select(a => new McpProfileCourseDto(
                             CourseId: a.CourseId,
                             CourseTitle: a.CourseTitle,
-                            RequirementType: MapRequirementType(a.RequirementType),
+                            RequirementType: "Assigned",
                             SortOrder: a.SortOrder,
                             DeepLink: BuildDeepLink($"/learn-skills/pages/content/{a.CourseId}", httpContext),
                             CourseClusterName: a.CourseClusterName,
@@ -242,16 +240,13 @@ public class McpProfileTools
                         )).ToList()))
                     .ToList();
 
-                var requiredTotal = assignments.Count(a => a.RequirementType == CourseRequirementType.Mandatory);
-                var optionalTotal = assignments.Count(a => a.RequirementType == CourseRequirementType.Optional);
-
                 return new McpProfileSkillsResponse(
                     ProfileId: profile.BaseEntryId,
                     Title: profile.Title,
                     Summary: profile.Summary,
                     TotalCourses: assignments.Count,
-                    RequiredCoursesCount: requiredTotal,
-                    OptionalCoursesCount: optionalTotal,
+                    RequiredCoursesCount: 0,
+                    OptionalCoursesCount: 0,
                     CourseClusters: courseClusters,
                     DeepLink: BuildDeepLink($"/learn-skills/profile/view/{profile.BaseEntryId}", httpContext)
                 );
@@ -637,14 +632,11 @@ public class McpProfileTools
             .Select(x => new McpProfileCourseDto(
                 CourseId: x.ca.CourseId,
                 CourseTitle: x.c.Title,
-                RequirementType: MapRequirementType(x.ca.RequirementType),
+                RequirementType: "Assigned",
                 SortOrder: x.ca.SortOrder,
                 DeepLink: BuildDeepLink($"/learn-skills/pages/content/{x.ca.CourseId}", httpContext)
             ))
             .ToListAsync(cancellationToken);
-
-        var requiredCount = courseAssignments.Count(ca => ca.RequirementType == "Required");
-        var optionalCount = courseAssignments.Count(ca => ca.RequirementType == "Optional");
 
         // Load department/division info
         string? divisionId = null;
@@ -681,23 +673,12 @@ public class McpProfileTools
             DivisionName: divisionName,
             DepartmentId: profile.DepartmentId,
             DepartmentName: departmentName,
-            TotalCourses: profile.TotalCourses,
-            RequiredCoursesCount: requiredCount,
-            OptionalCoursesCount: optionalCount,
+            TotalCourses: courseAssignments.Count,
+            RequiredCoursesCount: 0,
+            OptionalCoursesCount: 0,
             CourseAssignments: courseAssignments,
             DeepLink: BuildDeepLink($"/learn-skills/profile/view/{profile.BaseEntryId}", httpContext)
         );
-    }
-
-    private static string MapRequirementType(CourseRequirementType requirementType)
-    {
-        return requirementType switch
-        {
-            CourseRequirementType.Mandatory => "Required",
-            CourseRequirementType.Optional => "Optional",
-            CourseRequirementType.Recommended => "Recommended",
-            _ => "Assigned"
-        };
     }
 
     private static string BuildDeepLink(string path, HttpContext? httpContext)

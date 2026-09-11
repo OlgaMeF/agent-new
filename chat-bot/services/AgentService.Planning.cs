@@ -1026,10 +1026,7 @@ public partial class AgentService
             return false;
         }
 
-        return message.Contains("pflicht", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("mandatory", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("required", StringComparison.OrdinalIgnoreCase)
-            || message.Contains("gehören", StringComparison.OrdinalIgnoreCase)
+        return message.Contains("gehören", StringComparison.OrdinalIgnoreCase)
             || message.Contains("gehören dazu", StringComparison.OrdinalIgnoreCase)
             || message.Contains("diesem profil", StringComparison.OrdinalIgnoreCase)
             || message.Contains("dieses profil", StringComparison.OrdinalIgnoreCase)
