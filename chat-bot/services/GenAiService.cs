@@ -200,12 +200,17 @@ public class GenAiService
             };
         }).ToArray();
 
+        // Routing must be deterministic: low temperature reduces invented queries /
+        // malformed tool JSON with Llama 3.1-class models.
+        const double temperature = 0;
+
         if (tools is null || tools.Count == 0)
         {
             return new
             {
                 model = modelName,
                 messages = messagePayload,
+                temperature,
                 stream = false
             };
         }
@@ -221,7 +226,9 @@ public class GenAiService
             }
         }).ToArray();
 
-        // tool_choice: "auto" | "none" | { type, function: { name } }
+        // tool_choice: "auto" | "none" | "required" | { type, function: { name } }
+        // Must be sent — without it Llama often replies with prose/JSON in content
+        // instead of calling route_request, which yields empty queries downstream.
         object resolvedChoice = string.IsNullOrWhiteSpace(toolChoice)
             ? "auto"
             : toolChoice.Trim().ToLowerInvariant() switch
@@ -239,7 +246,8 @@ public class GenAiService
             model = modelName,
             messages = messagePayload,
             tools = toolPayload,
-            //tool_choice = resolvedChoice,
+            tool_choice = resolvedChoice,
+            temperature,
             stream = false
         };
     }
