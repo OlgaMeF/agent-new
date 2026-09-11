@@ -53,8 +53,8 @@ public partial class AgentService
             RegexOptions.Compiled | RegexOptions.Multiline | RegexOptions.IgnoreCase);
 
     /// <summary>
-    /// Tool catalogue. Personal data is limited to the authenticated user-context
-    /// tools exposed by the MCP server; no personal skill profile is inferred.
+    /// Tool catalogue. Personal user-context tools (bookmarks, progress) are not
+    /// available — the agent has no access to personal information.
     /// </summary>
     private static readonly Dictionary<string, ToolDescriptor> Tools = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -80,11 +80,7 @@ public partial class AgentService
         ["get_divisions"] = new("get_divisions", EntityKind.Division, ArgumentNeed.Optional,
             "Get divisions. Use for 'which areas exist'."),
         ["search_collections"] = new("search_collections", EntityKind.Collection, ArgumentNeed.Optional,
-            "Curated learning collections. A topic may be given and is matched locally."),
-        ["get_my_bookmarks"] = new("get_my_bookmarks", EntityKind.Course, ArgumentNeed.None,
-            "Courses and profiles the current user bookmarked."),
-        ["get_my_progress"] = new("get_my_progress", EntityKind.Course, ArgumentNeed.None,
-            "The authenticated user's completed and in-progress courses plus the site-wide completion rate."),
+            "Curated public learning collections. A topic may be given and is matched locally."),
     };
 
     private static readonly ConcurrentDictionary<string, ConversationState> ConversationStates =

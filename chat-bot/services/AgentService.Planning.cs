@@ -111,21 +111,20 @@ public partial class AgentService
         else if (IsProgressRequest(userMessage))
         {
             intent = AgentIntent.Progress;
-            toolCalls = [new ToolCallRequest("get_my_progress", string.Empty, ReferenceType.None)];
+            toolCalls = [];
+            clarification = null;
         }
         else if (IsBookmarkRequest(userMessage))
         {
             intent = AgentIntent.Bookmarks;
-            toolCalls = [new ToolCallRequest("get_my_bookmarks", string.Empty, ReferenceType.None)];
+            toolCalls = [];
+            clarification = null;
         }
         else if (IsPersonalCollectionRequest(userMessage))
         {
-            intent = AgentIntent.Clarify;
+            intent = AgentIntent.Bookmarks;
             toolCalls = [];
-            clarification = Localize(
-                reasoning.Language,
-                "Persönliche Collections kann ich aktuell nicht abrufen. Ich kann dir aber öffentliche Sammlungen zeigen.",
-                "I cannot retrieve personal collections right now, but I can show public collections.");
+            clarification = null;
         }
         else if (IsCollectionRequest(userMessage))
         {
@@ -279,7 +278,9 @@ public partial class AgentService
                 AgentIntent.Capabilities or
                 AgentIntent.SmallTalk or
                 AgentIntent.OutOfScope or
-                AgentIntent.Clarify);
+                AgentIntent.Clarify or
+                AgentIntent.Bookmarks or
+                AgentIntent.Progress);
             
             if (intent == AgentIntent.LearningRecommendation
                 && toolCalls.Count == 0)
@@ -566,10 +567,8 @@ public partial class AgentService
                 return new ToolCallRequest("search_collections", string.Empty, ReferenceType.None);
 
             case AgentIntent.Bookmarks:
-                return new ToolCallRequest("get_my_bookmarks", string.Empty, ReferenceType.None);
-
             case AgentIntent.Progress:
-                return new ToolCallRequest("get_my_progress", string.Empty, ReferenceType.None);
+                return null;
 
             case AgentIntent.CourseCompare when conversation.LastCourses.Count >= 2:
                 // Comparison recovery is handled in CreatePlan (needs multiple calls).

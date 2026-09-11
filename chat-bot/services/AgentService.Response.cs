@@ -32,6 +32,11 @@ public partial class AgentService
             return BuildClarificationAnswer(plan, language);
         }
 
+        if (plan.Intent is AgentIntent.Bookmarks or AgentIntent.Progress)
+        {
+            return BuildNoPersonalAccessAnswer(language);
+        }
+
         if (plan.Intent is AgentIntent.Capabilities or AgentIntent.SmallTalk or AgentIntent.OutOfScope)
         {
             return await BuildConversationalAnswerAsync(plan, conversation, cancellationToken);
@@ -39,11 +44,7 @@ public partial class AgentService
 
         if (evidence.RequiresSignIn)
         {
-            return new AnswerResult(
-                Localize(language,
-                    "Für deine gespeicherten Inhalte muss ich auf dein Nutzerkonto zugreifen – das hat gerade nicht funktioniert. Bitte lade die Seite neu und melde dich an. In der Zwischenzeit kann ich dir Kurse, Skills und Profile zeigen.",
-                    "I need access to your account to show your saved items, and that did not work just now. Please reload the page and sign in. In the meantime I can show you courses, skills and profiles."),
-                0);
+            return BuildNoPersonalAccessAnswer(language);
         }
 
             if (plan.Intent == AgentIntent.ProfileSearch && evidence.Profiles.Count == 0)
@@ -515,11 +516,12 @@ public partial class AgentService
             - find learning profiles (job roles), their skills and related courses
             - derive a learning path from a current role towards a target role
             - list divisions and departments
-            - show curated collections and the user's own bookmarks
+            - show curated public collections
 
-            You can show authenticated personal bookmarks and learning progress returned
-            by the MCP server. You cannot infer personal skills, goals or profile progress,
-            and you know nothing outside this platform's learning content.
+            You do not have access to personal user data such as bookmarks, private
+            collections or individual learning progress. If asked about those, say so
+            clearly and offer public catalogue help instead. You know nothing outside
+            this platform's learning content.
 
             Answer the user in this language: {{plan.Language}}.
             Intent: {{plan.Intent}}.
@@ -729,6 +731,25 @@ public partial class AgentService
             ["Which skill categories exist?"]));
 
         return new AnswerResult(builder.ToString().Trim(), 0, message);
+    }
+
+    private static AnswerResult BuildNoPersonalAccessAnswer(string language)
+    {
+        var message = Localize(language,
+            "Ich habe keinen Zugang zu persönlichen Informationen wie Lesezeichen, privaten Sammlungen oder deinem Lernfortschritt. Ich kann dir aber öffentliche Kurse, Skills, Lernprofile und kuratierte Sammlungen zeigen.",
+            "I do not have access to personal information such as bookmarks, private collections, or your learning progress. I can still help with public courses, skills, learning profiles, and curated collections.");
+
+        var builder = new StringBuilder(message);
+        AppendSuggestionBlock(builder, Localize(language,
+            ["Welche Kurse gibt es zu Projektmanagement?"],
+            ["Which courses are there on project management?"]));
+
+        return new AnswerResult(builder.ToString().Trim(), 0, message)
+        {
+            StructuredSuggestions = Localize(language,
+                ["Welche Kurse gibt es zu Projektmanagement?"],
+                ["Which courses are there on project management?"]).ToList()
+        };
     }
 
     /// <summary>
@@ -1092,8 +1113,13 @@ public partial class AgentService
         string language) =>
         plan.Intent switch
         {
-            AgentIntent.CourseSearch or AgentIntent.SkillCourses or AgentIntent.Bookmarks or AgentIntent.Progress =>
+            AgentIntent.CourseSearch or AgentIntent.SkillCourses =>
                 CourseSuggestions(evidence, language),
+
+            AgentIntent.Bookmarks or AgentIntent.Progress =>
+                Localize(language,
+                    ["Welche Kurse gibt es zu Projektmanagement?"],
+                    ["Which courses are there on project management?"]),
 
             AgentIntent.CourseDetails => Localize(language,
                 ["Gibt es ähnliche Kurse?"],

@@ -121,16 +121,10 @@ public partial class AgentService
                     QueryRequired: false),
 
             [AgentIntent.Bookmarks] =
-                new(
-                    ["get_my_bookmarks"],
-                    MinToolCalls: 1,
-                    MaxToolCalls: 1),
+                new([], 0, 0),
 
             [AgentIntent.Progress] =
-                new(
-                    ["get_my_progress"],
-                    MinToolCalls: 1,
-                    MaxToolCalls: 1),
+                new([], 0, 0),
 
             [AgentIntent.Capabilities] =
                 new([], 0, 0),
@@ -395,17 +389,7 @@ public partial class AgentService
                 break;
 
             case AgentIntent.Bookmarks:
-                calls.Add(new ToolCallRequest(
-                    "get_my_bookmarks",
-                    string.Empty,
-                    ReferenceType.None));
-                break;
-
             case AgentIntent.Progress:
-                calls.Add(new ToolCallRequest(
-                    "get_my_progress",
-                    string.Empty,
-                    ReferenceType.None));
                 break;
 
             default:

@@ -333,8 +333,8 @@ public partial class AgentService
         learning_recommendation → exactly 1–2× get_profile_skills (prefer targetProfile)
         division_overview → exactly 1× get_divisions
         collections → exactly 1× search_collections
-        bookmarks → exactly 1× get_my_bookmarks
-        progress → exactly 1× get_my_progress
+        bookmarks → toolCalls: [] (no personal data access)
+        progress → toolCalls: [] (no personal data access)
         capabilities | smalltalk | out_of_scope | clarify → toolCalls: []
 
         QUERY RULES (critical)
@@ -400,8 +400,9 @@ public partial class AgentService
           toolCalls=[{tool:"get_profile_skills", query:Y, ref:"none"}] (and optionally one for X).
         - If the user named a topic/subject, query AND slots.topic MUST contain it (never empty).
         - Difficulty words (Anfänger/Beginner, …) are not the topic — keep only the subject in query.
-        - Empty toolCalls only for capabilities, smalltalk, out_of_scope, clarify.
-        - Valid tools: search_courses, get_course, get_courses_by_tag, search_skills, get_skill, search_profiles, get_profile, get_profile_skills, get_divisions, search_collections, get_my_bookmarks, get_my_progress.
+        - Empty toolCalls only for capabilities, smalltalk, out_of_scope, clarify, bookmarks, progress.
+        - Bookmarks / personal collections / learning progress: intent bookmarks or progress, toolCalls=[] (no personal data).
+        - Valid tools: search_courses, get_course, get_courses_by_tag, search_skills, get_skill, search_profiles, get_profile, get_profile_skills, get_divisions, search_collections.
         - Example: "Welche Kurse gibt es zu Python?" →
           {"intent":"course_search","language":"de","slots":{"topic":"Python"},"toolCalls":[{"tool":"search_courses","query":"Python","ref":"none"}]}
         - Example: "Python-Kurse für Anfänger" →
@@ -1054,14 +1055,15 @@ public partial class AgentService
             return true;
         }
 
-        if (LooksLikeBookmarksRequest(message))
+        if (LooksLikeBookmarksRequest(message)
+            || LooksLikePersonalCollectionRequest(message))
         {
             reasoning = new ReasoningResult(
                 AgentIntent.Bookmarks,
                 language,
                 null,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                [new ToolCallRequest("get_my_bookmarks", string.Empty, ReferenceType.None)]);
+                []);
             return true;
         }
 
@@ -1072,7 +1074,7 @@ public partial class AgentService
                 language,
                 null,
                 new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-                [new ToolCallRequest("get_my_progress", string.Empty, ReferenceType.None)]);
+                []);
             return true;
         }
 
@@ -1189,7 +1191,14 @@ public partial class AgentService
     private static bool LooksLikeBookmarksRequest(string message) =>
         Regex.IsMatch(
             message,
-            @"\b(lesezeichen|bookmarks?|gemerkte|gemerkt)\b",
+            @"\b(lesezeichen|bookmarks?|gemerkte|gemerkt|favoriten?|saved)\b",
+            RegexOptions.IgnoreCase);
+
+    private static bool LooksLikePersonalCollectionRequest(string message) =>
+        Regex.IsMatch(message, @"\b(?:mein(?:e[nrms]?)?|my|mine)\b", RegexOptions.IgnoreCase)
+        && Regex.IsMatch(
+            message,
+            @"\b(sammlung(?:en)?|collections?)\b",
             RegexOptions.IgnoreCase);
 
     private static bool LooksLikeProgressRequest(string message) =>
@@ -1717,16 +1726,6 @@ public partial class AgentService
             }
 
             resolved.Add(new ToolCallRequest("search_collections", collectionQuery, ReferenceType.None));
-        }
-
-        if (resolved.Count == 0 && reasoning.Intent == AgentIntent.Bookmarks)
-        {
-            resolved.Add(new ToolCallRequest("get_my_bookmarks", string.Empty, ReferenceType.None));
-        }
-
-        if (resolved.Count == 0 && reasoning.Intent == AgentIntent.Progress)
-        {
-            resolved.Add(new ToolCallRequest("get_my_progress", string.Empty, ReferenceType.None));
         }
 
         if (resolved.Count == 0 && reasoning.Intent == AgentIntent.DivisionOverview)
