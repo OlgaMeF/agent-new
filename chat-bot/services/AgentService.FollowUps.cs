@@ -1090,6 +1090,12 @@ public partial class AgentService
 
         var patterns = new[]
         {
+            // "Erzähl mir mehr über den Kurs AWS Cloud Practitioner Essentials"
+            @"erzähl(?:e)?\s+mir\s+mehr\s+über\s+(?:den\s+|die\s+|das\s+)?kurs\s+(?<title>.+?)\s*[?.!]*$",
+            @"erzaehl(?:e)?\s+mir\s+mehr\s+über\s+(?:den\s+|die\s+|das\s+)?kurs\s+(?<title>.+?)\s*[?.!]*$",
+            @"mehr\s+über\s+(?:den\s+|die\s+|das\s+)?kurs\s+(?<title>.+?)\s*[?.!]*$",
+            @"zeig(?:e)?\s+mir\s+(?:details?\s+)?(?:zum|über|ueber)\s+(?:den\s+|die\s+|das\s+)?kurs\s+(?<title>.+?)\s*[?.!]*$",
+            // Legacy: title before the word "Kurs"
             @"erzähl(?:e)?\s+mir\s+mehr\s+über\s+(?<title>.+?)\s+kurs",
             @"erzaehl(?:e)?\s+mir\s+mehr\s+über\s+(?<title>.+?)\s+kurs",
             @"tell\s+me\s+more\s+about\s+(?:the\s+)?(?:course\s+)?(?<title>.+?)(?:\s+course)?\s*[?.!]*$",

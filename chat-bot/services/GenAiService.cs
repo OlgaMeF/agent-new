@@ -26,8 +26,11 @@ public class GenAiService
     /// Some Llama deployments reject <c>tool_choice</c> with HTTP 422
     /// (<c>capability_not_supported</c>). After the first failure we skip native
     /// tool calling and use JSON-in-content routing instead.
+    /// Must be static: <see cref="GenAiService"/> is registered via
+    /// <c>AddHttpClient&lt;GenAiService&gt;</c> (transient), so an instance field
+    /// would reset on every chat turn and re-pay the 422 each time.
     /// </summary>
-    private int _toolChoiceUnsupported;
+    private static int _toolChoiceUnsupported;
 
     public GenAiService(
         HttpClient httpClient,
