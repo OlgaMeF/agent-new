@@ -88,7 +88,7 @@ public class McpCourseResource
             ExternalCourseId: string.IsNullOrWhiteSpace(course.ExternalCourseId) ? null : course.ExternalCourseId,
             Instructor: string.IsNullOrWhiteSpace(course.Instructor) ? null : course.Instructor,
             DurationInHours: string.IsNullOrWhiteSpace(course.DurationInHours) ? null : course.DurationInHours,
-            DifficultyLevel: McpDifficultyLevel.ToWireValue(course.DifficultyLevel),
+            DifficultyLevel: MapDifficultyWireValue(course.DifficultyLevel),
             ClusterId: string.IsNullOrWhiteSpace(course.ClusterId) ? null : course.ClusterId,
             ClusterName: string.IsNullOrWhiteSpace(course.ClusterName) ? null : course.ClusterName,
             SubClusterId: string.IsNullOrWhiteSpace(course.SubClusterId) ? null : course.SubClusterId,
@@ -128,6 +128,24 @@ public class McpCourseResource
 
         // Fallback: relative URL (shouldn't happen in normal operation)
         return $"/learn-skills/pages/content/{course.BaseEntryId}";
+    }
+
+    private static string? MapDifficultyWireValue(object? level)
+    {
+        if (level is null)
+        {
+            return null;
+        }
+
+        var value = Convert.ToInt32(level);
+
+        return value switch
+        {
+            1 => "Beginner",
+            2 => "Intermediate",
+            3 => "Expert",
+            _ => null
+        };
     }
 }
 

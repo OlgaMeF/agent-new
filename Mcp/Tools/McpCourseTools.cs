@@ -339,7 +339,7 @@ public class McpCourseTools
             ExternalCourseId: string.IsNullOrWhiteSpace(course.ExternalCourseId) ? null : course.ExternalCourseId,
             Instructor: string.IsNullOrWhiteSpace(course.Instructor) ? null : course.Instructor,
             DurationInHours: string.IsNullOrWhiteSpace(course.DurationInHours) ? null : course.DurationInHours,
-            DifficultyLevel: McpDifficultyLevel.ToWireValue(course.DifficultyLevel),
+            DifficultyLevel: MapDifficultyWireValue(course.DifficultyLevel),
             ClusterId: string.IsNullOrWhiteSpace(course.ClusterId) ? null : course.ClusterId,
             ClusterName: string.IsNullOrWhiteSpace(course.ClusterName) ? null : course.ClusterName,
             SubClusterId: string.IsNullOrWhiteSpace(course.SubClusterId) ? null : course.SubClusterId,
@@ -390,7 +390,7 @@ public class McpCourseTools
             ExternalCourseId: string.IsNullOrWhiteSpace(course.ExternalCourseId) ? null : course.ExternalCourseId,
             Instructor: string.IsNullOrWhiteSpace(course.Instructor) ? null : course.Instructor,
             DurationInHours: string.IsNullOrWhiteSpace(course.DurationInHours) ? null : course.DurationInHours,
-            DifficultyLevel: McpDifficultyLevel.ToWireValue(course.DifficultyLevel),
+            DifficultyLevel: MapDifficultyWireValue(course.DifficultyLevel),
             ClusterId: string.IsNullOrWhiteSpace(course.ClusterId) ? null : course.ClusterId,
             ClusterName: string.IsNullOrWhiteSpace(course.ClusterName) ? null : course.ClusterName,
             SubClusterId: string.IsNullOrWhiteSpace(course.SubClusterId) ? null : course.SubClusterId,
@@ -458,4 +458,27 @@ public class McpCourseTools
             return DateTimeOffset.MinValue;
         }
     }
+
+    /// <summary>
+    /// Maps LearnCourse.DifficultyLevel (Unset=0 … Expert=3) to the MCP wire string.
+    /// </summary>
+    private static string? MapDifficultyWireValue(object? level)
+    {
+        if (level is null)
+        {
+            return null;
+        }
+
+        var value = level is Enum
+            ? Convert.ToInt32(level)
+            : Convert.ToInt32(level);
+
+        return value switch
+        {
+            1 => "Beginner",
+            2 => "Intermediate",
+            3 => "Expert",
+            _ => null
+        };
     }
+}

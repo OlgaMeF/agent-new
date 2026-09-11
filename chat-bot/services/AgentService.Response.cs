@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Runtime.CompilerServices;
 using MB.ComTools.Apps.Content.Services.Agent;
-using MB.ComTools.Apps.Setup.Mcp.Dtos;
 
 namespace MB.ComTools.Apps.Content.Services;
 
@@ -889,7 +888,7 @@ public partial class AgentService
                 AppendCardField(
                     builder,
                     "DIFFICULTY",
-                    McpDifficultyLevel.ToDisplayLabel(course.DifficultyLevel, plan.Language) ?? "k. A.");
+                    FormatDifficultyLabel(course.DifficultyLevel, plan.Language) ?? "k. A.");
                 AppendCardField(builder, "URL", course.DeepLink);
                 builder.AppendLine("[/COURSE_CARD]");
                 var courseRef = new EntityRef(course.Id, course.Title, EntityKind.Course);
@@ -943,7 +942,7 @@ public partial class AgentService
         string? description,
         string language)
     {
-        var difficulty = McpDifficultyLevel.ToDisplayLabel(course.DifficultyLevel, language);
+        var difficulty = FormatDifficultyLabel(course.DifficultyLevel, language);
 
         return new()
         {

@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Runtime.CompilerServices;
 using MB.ComTools.Apps.Content.Services.Agent;
-using MB.ComTools.Apps.Setup.Mcp.Dtos;
 
 namespace MB.ComTools.Apps.Content.Services;
 
@@ -1148,16 +1147,12 @@ private static List<ToolCallRequest> DeriveSecondRound(
     {
         preferred = string.Empty;
 
-        if (plan.Slots.TryGetValue("audience", out var audience))
+        if (plan.Slots.TryGetValue("audience", out var audience)
+            && TryParseDifficultyLevel(audience, out var fromAudience)
+            && fromAudience is > 0)
         {
-            var fromAudience = McpDifficultyLevel.NormalizeFilter(audience);
-
-            if (fromAudience is not null
-                && !fromAudience.Equals(McpDifficultyLevel.Unset, StringComparison.OrdinalIgnoreCase))
-            {
-                preferred = fromAudience;
-                return true;
-            }
+            preferred = DifficultyWireValue(fromAudience)!;
+            return true;
         }
 
         return TryInferDifficultyLevel(plan.UserMessage, out preferred);
@@ -1165,12 +1160,12 @@ private static List<ToolCallRequest> DeriveSecondRound(
 
     private static int DifficultyMatchScore(string? courseLevel, string preferred)
     {
-        if (!McpDifficultyLevel.TryParse(courseLevel, out var actual) || actual == 0)
+        if (!TryParseDifficultyLevel(courseLevel, out var actual) || actual == 0)
         {
             return 0;
         }
 
-        if (!McpDifficultyLevel.TryParse(preferred, out var wanted) || wanted == 0)
+        if (!TryParseDifficultyLevel(preferred, out var wanted) || wanted == 0)
         {
             return 0;
         }
@@ -1184,16 +1179,16 @@ private static List<ToolCallRequest> DeriveSecondRound(
         return Math.Abs(actual - wanted) == 1 ? 1 : 0;
     }
 
-    private static bool TryInferDifficultyLevel(string message, out string filterValue)
+    private static bool TryInferDifficultyLevel(string message, out string wireValue)
     {
-        filterValue = string.Empty;
+        wireValue = string.Empty;
 
         if (string.IsNullOrWhiteSpace(message))
         {
             return false;
         }
 
-        if (!McpDifficultyLevel.TryParse(message, out var level) || level == 0)
+        if (!TryParseDifficultyLevel(message, out var level) || level == 0)
         {
             return false;
         }
@@ -1220,7 +1215,77 @@ private static List<ToolCallRequest> DeriveSecondRound(
             return false;
         }
 
-        filterValue = McpDifficultyLevel.ToFilterValue(level)!;
+        wireValue = DifficultyWireValue(level)!;
         return true;
+    }
+
+    private static bool TryParseDifficultyLevel(string? input, out int level)
+    {
+        level = 0;
+
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return false;
+        }
+
+        var normalized = input.Trim().ToLowerInvariant()
+            .Replace("ä", "ae", StringComparison.Ordinal)
+            .Replace("ö", "oe", StringComparison.Ordinal)
+            .Replace("ü", "ue", StringComparison.Ordinal);
+
+        if (normalized is "3" or "expert" or "experte" or "experts" or "profi"
+            || normalized.Contains("expert", StringComparison.Ordinal)
+            || normalized.Contains("experte", StringComparison.Ordinal))
+        {
+            level = 3;
+            return true;
+        }
+
+        if (normalized is "1" or "beginner" or "anfaenger" or "einsteiger"
+            or "basics" or "basic" or "grundlagen"
+            || normalized.Contains("anfaenger", StringComparison.Ordinal)
+            || normalized.Contains("einsteiger", StringComparison.Ordinal)
+            || normalized.Contains("beginner", StringComparison.Ordinal))
+        {
+            level = 1;
+            return true;
+        }
+
+        if (normalized is "2" or "intermediate" or "fortgeschritten" or "medium"
+            or "mittel" or "advanced"
+            || normalized.Contains("fortgeschritten", StringComparison.Ordinal)
+            || normalized.Contains("intermediate", StringComparison.Ordinal))
+        {
+            level = 2;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static string? DifficultyWireValue(int level) => level switch
+    {
+        1 => "Beginner",
+        2 => "Intermediate",
+        3 => "Expert",
+        _ => null
+    };
+
+    private static string? FormatDifficultyLabel(string? wireOrRaw, string language)
+    {
+        if (!TryParseDifficultyLevel(wireOrRaw, out var level) || level == 0)
+        {
+            return null;
+        }
+
+        var german = language.StartsWith("de", StringComparison.OrdinalIgnoreCase);
+
+        return level switch
+        {
+            1 => german ? "Anfänger" : "Beginner",
+            2 => german ? "Fortgeschritten" : "Intermediate",
+            3 => german ? "Experte" : "Expert",
+            _ => null
+        };
     }
 }
