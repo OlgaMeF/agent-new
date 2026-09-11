@@ -30,8 +30,7 @@ public class McpCacheService
     public async Task<T> GetOrCreateAsync<T>(
         string key,
         string tokenName,
-        Func<Task<T>> factory,
-        Func<T, bool>? isNegative = null)
+        Func<Task<T>> factory)
     {
         // Skip cache when TTL is 0 (e.g., test environment)
         if (_options.CacheTtlMinutes <= 0)
@@ -45,14 +44,7 @@ public class McpCacheService
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(_options.CacheTtlMinutes);
             entry.AddExpirationToken(new Microsoft.Extensions.Primitives.CancellationChangeToken(cts.Token));
             entry.Size = 1; // Required when IMemoryCache is configured with SizeLimit
-            var value = await factory();
-            if (isNegative?.Invoke(value) == true && _options.NegativeCacheTtlMinutes > 0)
-            {
-                entry.AbsoluteExpirationRelativeToNow =
-                    TimeSpan.FromMinutes(_options.NegativeCacheTtlMinutes);
-            }
-
-            return value;
+            return await factory();
         });
     }
 

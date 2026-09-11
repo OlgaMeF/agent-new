@@ -136,8 +136,7 @@ public class McpCourseTools
                     totalCount,
                     DateTimeOffset.UtcNow
                 );
-            },
-            isNegative: result => result.Courses.Count == 0);
+            });
     }
 
     /// <summary>

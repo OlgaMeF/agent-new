@@ -161,8 +161,7 @@ public class McpProfileTools
                     totalCount,
                     DateTimeOffset.UtcNow
                 );
-            },
-            isNegative: result => result.Profiles.Count == 0);
+            });
     }
 
     /// <summary>
