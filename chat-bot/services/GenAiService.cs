@@ -88,14 +88,14 @@ public class GenAiService
 
         try
         {
-            var apiKey = _configuration["GenAi:ApiKey"];
+            var apiKey = GetConfigValue("GenAi:ApiKey", "GenAi:api_key");
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 _logger.LogWarning("GenAI ApiKey is not configured.");
                 return null;
             }
 
-            var configuredPath = _configuration["GenAi:ChatCompletionsPath"];
+            var configuredPath = GetConfigValue("GenAi:ChatCompletionsPath", "GenAi:chat_completions_path");
             var endpointPath = string.IsNullOrWhiteSpace(configuredPath)
                 ? "openai/chat/completions"
                 : configuredPath.TrimStart('/');
@@ -380,15 +380,15 @@ public class GenAiService
             return _cachedModel;
         }
 
-        var configuredModel = _configuration["GenAi:Model"];
+        var configuredModel = GetConfigValue("GenAi:Model", "GenAi:model");
         if (!string.IsNullOrWhiteSpace(configuredModel))
         {
             _cachedModel = configuredModel;
             return _cachedModel;
         }
 
-        var configUrl = _configuration["GenAi:ConfigUrl"];
-        var apiKey = _configuration["GenAi:ApiKey"];
+        var configUrl = GetConfigValue("GenAi:ConfigUrl", "GenAi:config_url");
+        var apiKey = GetConfigValue("GenAi:ApiKey", "GenAi:api_key");
 
         if (string.IsNullOrWhiteSpace(configUrl) || string.IsNullOrWhiteSpace(apiKey))
         {
@@ -441,6 +441,20 @@ public class GenAiService
             _logger.LogError(ex, "Failed to resolve GenAI model from config endpoint.");
             return null;
         }
+    }
+
+    private string? GetConfigValue(params string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            var value = _configuration[key];
+            if (!string.IsNullOrWhiteSpace(value))
+            {
+                return value;
+            }
+        }
+
+        return null;
     }
 
     private static bool TryGetString(JsonElement element, out string? value, string propertyName)

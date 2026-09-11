@@ -1,0 +1,727 @@
+Vollständige Neubewertung: Learn-/Skills-Agent und MCP-Implementierung
+Executive Summary
+
+Gesamturteil: Die hybride Grundidee – LLM für Sprachverständnis, deterministische Steuerung durch AgentService, MCP für Plattformzugriff – ist richtig. Die Qualitätsprobleme entstehen jedoch aktuell an der Grenze zwischen Routing, Query-Erzeugung, Toolvertrag und Retrieval. AgentLayers.cs beschreibt Router, Executor und Renderer als getrennte Verantwortlichkeiten, hält die Implementierung aber weiterhin in AgentService-Partials; zudem transportiert AgentRouteDecision nur Toolnamen, während Argumente und Evidenz außerhalb der Verträge verbleiben.
+
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+        .metrics-container,
+        .insights-container{
+            grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="insights-container">
+ <div class="insight-card">
+  <h4>P0 – widersprüchliche Toolverträge</h4>
+  <p>Suchtools akzeptieren leere Queries, beschreiben Filter, die nicht implementiert sind, und melden fachliche Fehler als leere Ergebnisse.</p>
+ </div>
+ <div class="insight-card">
+  <h4>P0 – Sicherheitslücke möglich</h4>
+  <p>Das bloße Vorhandensein eines Authorization-Headers umgeht die API-Key-Prüfung; eine Tokenvalidierung wird im Middleware-Code nicht erzwungen.</p>
+ </div>
+ <div class="insight-card">
+  <h4>P1 – Suche ist Substring-Suche, keine Recommendation</h4>
+  <p>ILIKE über wenige Textfelder, fehlende Scores und fehlendes Reranking erklären semantisch ähnliche, aber fachlich falsche Empfehlungen.</p>
+ </div>
+ <div class="insight-card">
+  <h4>P1 – Tagstruktur ist ein guter Start, aber kein Skill-Graph</h4>
+  <p>Übersetzungen und Hierarchie existieren; Skill-Level, Voraussetzungen, Zielrollen, Kompetenzgrade und Relationstypen fehlen.</p>
+ </div>
+</div>
+
+
+Priorität: Zuerst Toolverträge, typisierte Fehler und Query-Validierung reparieren. Danach Terminologieauflösung, Hybrid Retrieval und Reranking einführen. Ein Modellwechsel oder Toolformer-Fine-Tuning wäre vorher hauptsächlich Symptombehandlung.
+
+1. Architektur-Review
+1.1 Gute vorhandene Grundlagen
+Router, Executor und Renderer sind konzeptionell getrennt; vorgesehen sind Routing aus Nachricht und Conversation Snapshot, Toolausführung sowie strukturierte Karten und Textantworten.
+Der aktuelle Planner besitzt bereits wertvolle Schutzlogik: ungültige Positionsreferenzen werden nicht geraten, sondern führen zu einer Rückfrage; Follow-ups können über ActiveProfile, ActiveSkill, ActiveCourse und LastSearchTopic aufgelöst werden.
+Die bereitgestellten DTOs liefern stabile IDs, Titel, Links, Tags und Profildaten statt ausschließlich unstrukturiertem Text.
+1.2 Zentrales Strukturproblem
+
+AgentRouteDecision behauptet laut Kommentar, Intent sowie „tool names/args“ zu enthalten, besitzt tatsächlich aber nur List<string> ToolNames. AgentExecutionSummary enthält wiederum nur Counts und keinen normalisierten Evidenzkörper. Dadurch bleibt die eigentliche Kopplung in AgentService: Query, Argumentmodell, Rohantworten, Auswahl und Evidenz sind nicht über testbare Schnittstellen getrennt.
+
+Konsequenzen:
+
+Keine isolierten Unit-Tests für Query Construction.
+Keine Tool-spezifische Schema-Validierung vor der Ausführung.
+Ein leerer String kann gleichzeitig „Tool hat keine Argumente“, „alle Elemente auflisten“ oder „kaputte Suchquery“ bedeuten.
+Retry- und Relevance-Entscheidungen greifen auf verteilten Zustand statt auf ein explizites Retrievalergebnis zu.
+Telemetrie kann Toolnamen und Counts erfassen, aber nicht zuverlässig erklären, warum ein Ergebnis ausgewählt wurde.
+2. Review der MCP-Toollandschaft
+Tool	Befund	Risiko	Prioritätsearch_courses	query optional; skillLevel und divisionId werden beschrieben, aber ausdrücklich nicht implementiert. Textsuche erfasst nur Titel, Summary und Instructor.	Leere Katalogabfrage, falsche Erwartungen des Routers, keine Skill-Suche	P0
+list_courses	Saubere Trennung für vollständigen Katalog vorhanden.	Wird durch optionales search_courses funktional überlappt	P0: konsequent nutzen
+search_profiles	Query optional; Whitespace wird mit IsNullOrEmpty nicht abgefangen.	LIKE '% %', Nulltreffer ohne erklärbaren Fehler	P0
+get_courses_by_tag	Akzeptiert zwei optionale Identifikatoren; fehlen beide oder wird der Tag nicht gefunden, kommt eine leere Erfolgsliste zurück.	Agent kann Invalid Input, unbekannten Tag und echten Nulltreffer nicht unterscheiden	P0
+search_skills	Gibt die komplette Taxonomie zurück und empfiehlt sich selbst als erster Aufruf.	Große Kontextmenge, unnötiger Tokenverbrauch, schlechteres Toolverständnis	P1
+get_skill	Lädt sämtliche Tags in den Speicher und verwendet danach Exact-/Contains-Matching mit FirstOrDefault.	Skalierung und mehrdeutige Auflösung; falscher erster Treffer möglich	P1
+get_profile_skills	Gruppiert Kurse nach ClusterName ?? "Allgemein" und bezeichnet dies als Skillgruppe.	Cluster und Skill werden semantisch vermischt	P0/P1
+get_profile	Gute ID-basierte Detailabfrage, aber null bei „nicht gefunden“ ohne typisierten Status.	Keine Recovery-Information	P1
+search_collections	Gibt anonyme object-Strukturen zurück.	Kein Output-Schema, schwächere Clientvalidierung	P1
+User-Tools	Authentifizierungsfehler werden als reguläres Objekt { error = ... } zurückgegeben.	Tool Call technisch erfolgreich, fachlich aber fehlgeschlagen	P0
+
+Anthropic empfiehlt wenige, klar abgegrenzte, workfloworientierte Tools sowie tokenarme und bedeutungsvolle Antworten; überlappende Tools und das einfache Spiegeln bestehender APIs verwirren Agenten. Die MCP-Spezifikation unterstützt verpflichtende inputSchemas, outputSchema, structuredContent und reparierbare Toolfehler mit isError: true.
+
+2.1 Konkrete Vertragsfehler
+search_courses
+
+Die Beschreibung verspricht Plattform-, Skill-Level-, Cluster- und Divisionsfilter. Im Code werden skillLevel und divisionId nicht angewendet; divisionId fehlt auch im Cache-Key. Zusätzlich filtert die Implementierung lediglich Discriminator und IsDeleted, nicht aber IsActive, obwohl das Tool „published courses“ verspricht.
+
+Empfohlener Vertrag:
+
+public sealed record CourseSearchRequest(
+    string Query,
+    string Language,
+    IReadOnlyList<string>? SkillIds = null,
+    string? Platform = null,
+    string? ClusterId = null,
+    bool ActiveOnly = true,
+    int Limit = 20,
+    string? ContinuationToken = null);
+
+Query: required, minLength: 2, maxLength.
+Keine Parameter veröffentlichen, die nicht implementiert sind.
+list_courses ausschließlich für browse-/Katalogintents.
+Skill-ID statt frei generiertem skillLevel oder tagName.
+Standardlimit eher 10–20 statt 50; Detaildaten anschließend gezielt laden.
+search_profiles
+
+Die Card-Zuordnung setzt DivisionId auf p.Profile.DepartmentId, wenn ein Department gefunden wurde, obwohl der Divisionsname separat bestimmt wurde. Das ist ein konkreter Mappingfehler und kann nachfolgende Filter oder Deep Links verfälschen.
+
+get_courses_by_tag
+
+Die Tagauflösung sucht zuerst exakt in TagTranslations, danach exakt in Tags.Name; Mehrdeutigkeiten werden durch FirstOrDefault still aufgelöst. Der Agent-Trace zeigt genau das praktische Problem: „KI“ wurde als Skill interpretiert, get_courses_by_skill/search_courses wurden geplant, der Tag wurde nicht gefunden und anschließend trat zusätzlich ein TLS-Fehler auf.
+
+Besser: skills.resolve liefert Kandidaten und Confidence; erst ein separater ID-basierter Aufruf lädt Kurse.
+
+3. Ursachen für leere oder falsche Queries
+3.1 Leere Strings sind architektonisch normalisiert
+
+Der Planner verwendet string.Empty korrekt für argumentlose Tools wie get_divisions, get_my_progress und search_skills, aber auch für search_profiles und als letzten Fallback einer Kurssuche. Ein generischer ToolCallRequest(toolName, string entity, ...) kann diese Bedeutungen nicht unterscheiden.
+
+3.2 Heuristische Query-Verkürzung verliert Bedeutung
+
+ExtractCourseSearchTopic trennt Titel unter anderem an „im“, „in“, „für“, „mit“, „von“, by, and und Bindestrichen. StripFollowUpTerms entfernt außerdem Wörter wie „Kurs“, „weitere Kurse“ und „gibt es“. Das kann beispielsweise aus „KI für Projektmanagement“ nur „KI“ oder aus einem offiziellen Kurstitel einen zu allgemeinen Begriff erzeugen.
+
+3.3 Toolbeschreibung und Implementierung widersprechen sich
+
+Das LLM erhält semantisch breite Toolbeschreibungen, während die Implementierung einfache Substring-Suche auf wenigen Feldern ausführt. Die Bachelorarbeit identifiziert die Query-Generierung selbst als wesentlichen Einflussfaktor für unvollständige oder unpassende Ergebnisse.
+
+3.4 Nulltreffer ist kein eindeutiger Zustand
+
+Aktuell können folgende Situationen gleich aussehen:
+
+Query leer,
+Tag nicht vorhanden,
+Query syntaktisch zulässig, aber ohne Treffer,
+Filter ignoriert,
+aktiver Kurs fehlt,
+Berechtigung fehlt,
+Backend-/TLS-Fehler.
+
+Für Query-Recovery benötigt der Agent stattdessen eindeutige Zustände.
+
+4. Skill-, Tag- und Profilarchitektur
+4.1 Was bereits geeignet ist
+
+Die vorhandenen Tags bieten stabile IDs, Name, Typ, Gruppe, Parent-Beziehung und mehrsprachige Übersetzungen. search_skills baut daraus einen hierarchischen Baum; Kurse können sowohl über Legacy Parent-/Child-FKs als auch TagAssignments mit Tags verbunden werden.
+
+Damit existiert eine gute Grundlage für einen Terminologie-Service und eine Navigationstaxonomie.
+
+4.2 Was für hochwertige Recommendations fehlt
+
+Die aktuelle Struktur modelliert nicht explizit:
+
+bevorzugtes Label gegenüber Alias/Abkürzung/Tippfehler,
+related-to versus broader/narrower,
+Skill-Level beziehungsweise erwartete Kompetenz,
+Kurs deckt Skill ab – mit Gewicht oder Lernziel,
+Voraussetzung zwischen Skills oder Kursen,
+Skill-Anforderung eines Profils,
+Lerner besitzt Skill auf Niveau X,
+Zielniveau und Skill Gap,
+negative beziehungsweise ausschließende Beziehungen,
+Gültigkeit, Version und Provenienz einer Zuordnung.
+
+SKOS kann Konzepte, mehrsprachige Preferred-/Alternative-/Hidden-Labels, Hierarchien, verwandte Konzepte und externe Mappings ausdrücken; Hidden Labels sind ausdrücklich für Suchvarianten und Schreibfehler vorgesehen. SKOS ist dabei eine leichtgewichtige Wissensorganisationsstruktur und keine vollständige formale Ontologie.
+
+Empfehlung
+Kurzfristig: bestehende Tabellen weiterverwenden und TerminologyAlias ergänzen.
+Mittelfristig: Relationstabelle mit typisierten Kanten.
+Erst langfristig: vollständiger Skill Graph oder Knowledge Graph, wenn Skill-Gap-, Voraussetzung- und Lernpfad-Anfragen benötigt werden.
+SkillConcept
+ ├─ PreferredLabel[language]
+ ├─ AlternativeLabel[language, type=alias|acronym]
+ ├─ HiddenLabel[language, type=typo]
+ ├─ BroaderSkill
+ ├─ RelatedSkill
+ └─ ExternalMapping
+
+CourseSkill
+ ├─ CourseId
+ ├─ SkillId
+ ├─ CoverageLevel
+ ├─ TargetLevel
+ ├─ Weight
+ └─ EvidenceSource
+
+ProfileSkill
+ ├─ ProfileId
+ ├─ SkillId
+ ├─ RequiredLevel
+ └─ Mandatory
+
+5. Empfohlene Zielarchitektur
+
+Die Zielarchitektur sollte das LLM nicht direkt aus dem gesamten MCP-Katalog frei auswählen lassen. MCP erlaubt zwar modellgesteuerte Tools, schreibt aber kein bestimmtes Interaktionsmodell vor; die Anwendung kann Toolfreigaben und Policies deterministisch steuern. Ollama unterstützt Tool Calling und schema-basierte Structured Outputs, wodurch Routing- und Queryobjekte als strikt validierbares JSON erzeugt werden können.
+
+Figure 1: Empfohlene Zielarchitektur mit deterministischem Tool-Gating, validierten Query-Kandidaten, Terminologieauflösung, mehrstufigem Retrieval/Reranking und evidenzgebundener Antwortplanung.
+
+Ablauf
+
+Intent-/Entity-Parser
+
+LLM erzeugt nur ein strukturiertes IntentAnalysis.
+Felder: Intent, EntityType, OriginalTerms, Constraints, Sprache, Confidence.
+
+Deterministische Tool Policy
+
+CourseSearch → courses.search, eventuell skills.resolve.
+CatalogBrowse → courses.list.
+ProfileDetails → profiles.get.
+Persönliche Daten → nur User-Tools und nur mit validiertem Userkontext.
+
+Query Builder
+
+Q0: Originalkernbegriff.
+Q1: normalisierte Schreibweise.
+Q2: kanonisches Terminologielabel.
+Q3: höchstens eine kontrollierte semantische Alternative.
+
+Query Validator
+
+Query nicht leer/Whitespace.
+Originalentität bleibt erhalten.
+ID und exakter Titel werden nicht umgeschrieben.
+Tool und EntityType kompatibel.
+Filterwerte sind bekannt.
+
+Retrieval Coordinator
+
+Lexikal: Titel, Summary, Tags, Cluster, Instructor.
+Semantisch: Kursbeschreibung und Lernziele.
+Tag-/Skill-basierte Kandidaten.
+Deduplikation und Fusion.
+
+Reranker
+
+Skill-Match, Lernziel, Sprache, Niveau, Status, Profilanforderung, bereits abgeschlossen, ACL.
+Mindest-Relevanz.
+Nicht bloß TotalCount > 0.
+
+Recovery Controller
+
+Maximal zwei zusätzliche Query-Kandidaten.
+Danach Rückfrage oder transparente Nullantwort.
+Kein unbegrenzter Agent-Loop.
+
+Azure AI Search kombiniert bei Hybrid Search initiale BM25-/RRF-Ergebnisse mit sekundärem semantischem Ranking. Query Rewrite kann Tippfehler und Synonyme behandeln, warnt jedoch davor, dass exakte Produktbezeichner oder IDs verloren gehen können. Vergleichbare Hybrid-Suche lässt sich mit PostgreSQL Full-Text Search, pgvector und RRF auf derselben Datenbank aufbauen.
+
+6. Konkrete Klassen- und API-Refactorings
+6.1 Agent-Seite
+public sealed record AgentRouteDecision(
+    AgentIntent Intent,
+    LanguageCode Language,
+    IReadOnlyList<ToolInvocationCandidate> Candidates,
+    QueryContext QueryContext,
+    double Confidence,
+    ClarificationRequest? Clarification);
+
+public sealed record ToolInvocationCandidate(
+    string ToolName,
+    JsonElement Arguments,
+    string Reason,
+    int Priority);
+
+public sealed record RetrievalResult<T>(
+    RetrievalStatus Status,
+    string OriginalQuery,
+    IReadOnlyList<QueryAttempt> Attempts,
+    IReadOnlyList<ScoredItem<T>> Items,
+    RetrievalDiagnostics Diagnostics,
+    RetrievalError? Error);
+
+
+Neue Services:
+
+IIntentClassifier
+IToolPolicy
+IQueryBuilder
+IQueryValidator
+ITerminologyResolver
+IRetrievalCoordinator
+ICourseReranker
+IEvidenceValidator
+IResponsePlanner
+
+IAgentExecutor.ExecuteAsync sollte vollständige Evidenz zurückgeben, nicht nur Counts. Der Renderer darf ausschließlich diese Evidenz konsumieren.
+
+6.2 MCP-Namensraum
+
+Statt flacher, teilweise überlappender Namen:
+
+learn_courses_search
+learn_courses_list
+learn_courses_get
+learn_skills_resolve
+learn_skills_search
+learn_skills_get
+learn_profiles_search
+learn_profiles_get
+learn_profiles_get_curriculum
+learn_user_get_progress
+learn_user_get_bookmarks
+
+
+Namespacing und klare Funktionsgrenzen reduzieren Verwechslungen; Anthropic empfiehlt außerdem, technische IDs nur dann zurückzugeben, wenn sie für Folgeaufrufe benötigt werden, und ein response_format=concise|detailed anzubieten.
+
+6.3 Standardisierte MCP-Antwort
+public sealed record McpEnvelope<T>(
+    McpStatus Status,
+    T? Data,
+    IReadOnlyList<McpWarning> Warnings,
+    McpError? Error,
+    McpMeta Meta);
+
+public sealed record McpMeta(
+    string Tool,
+    string? OriginalQuery,
+    string? ExecutedQuery,
+    int ResultCount,
+    int TotalCount,
+    DateTimeOffset GeneratedAt,
+    string CorrelationId);
+
+
+Für C# unterstützt McpServerTool(UseStructuredContent = true) die automatische Ableitung eines Output-Schemas aus dem Return Type. Validierungsfehler sollten isError: true mit reparierbarem Hinweis liefern, nicht null oder leere Listen.
+
+7. Caching, Fehlerbehandlung, Security und Skalierung
+Caching
+
+McpCacheService.cs verwendet IMemoryCache, absolute TTL und entity-basierte Cancellation Tokens. Risiken:
+
+Prozesslokaler Cache skaliert nicht konsistent über mehrere Instanzen.
+GetOrCreateAsync(...) ?? await factory() führt bei legitimem null potenziell einen zweiten Datenbankaufruf aus.
+Die CTS-Ersetzung ist nicht synchronisiert.
+get_divisions und site-config verwenden den "tags"-Invalidierungstoken.
+Negative Ergebnisse benötigen kurze, getrennte TTLs, damit neu angelegte Tags nicht lange unsichtbar bleiben.
+
+Ziel: zunächst HybridCache/distributed cache mit Single-Flight; getrennte Versionen für Courses, Profiles, Tags, Divisions und SiteConfig.
+
+Security
+
+McpApiKeyMiddleware.cs lässt jeden Request mit vorhandenem Authorization-Header passieren, ohne in dieser Middleware Authentifizierung, Scheme oder User.Identity.IsAuthenticated zu prüfen. McpServerExtensions.cs mappt /mcp, zeigt aber keine RequireAuthorization()-Policy.
+
+P0-Maßnahmen:
+
+if (context.User.Identity?.IsAuthenticated == true)
+{
+    await _next(context);
+    return;
+}
+
+
+Zusätzlich:
+
+Endpoint-Policy und Scopes pro User-Tool.
+Audience-Validierung.
+API-Key-Hash/Rotation oder mTLS für technische Clients.
+Keine gemeinsamen Rechte für Katalog- und Userdaten.
+Konfigurationsvalidierung beim Start.
+Rate Limiter tatsächlich registrieren: RateLimitPerMinute existiert, seine Nutzung ist in den bereitgestellten Dateien nicht sichtbar.
+
+Die MCP-Spezifikation verlangt, dass Bearer Tokens speziell für den MCP-Server ausgestellt wurden und nicht an Upstream-Systeme durchgereicht werden.
+
+Skalierung
+
+get_skill lädt alle Tags und sucht im Speicher. search_skills lädt ebenfalls alle Tags, erstellt mehrere Dictionaries und aktualisiert im dritten Durchlauf für jeden Tag potenziell sämtliche Parent-Listen. Das ist für kleine Taxonomien akzeptabel, sollte aber durch indizierte Datenbankabfragen und gezielte Suchtools ersetzt werden.
+
+8. Recommendation- und Antwortqualität
+
+Suche und Empfehlung müssen getrennt werden. Ein etabliertes Recommendation-Muster besteht aus Candidate Generation, Scoring und Re-Ranking, wobei die letzte Stufe zusätzliche Constraints, Diversität und Frische berücksichtigt.
+
+Empfohlenes Ranking
+FinalScore =
+  SkillCoverage
++ LearningGoalMatch
++ ExactTermMatch
++ ProfileRequirementMatch
++ LanguageMatch
++ LevelFit
++ ContentQuality
+- AlreadyCompletedPenalty
+- InactivePenalty
+- ConstraintViolation
+
+
+Ein Knowledge Graph kann später Kursvoraussetzungen, bereits absolvierte Inhalte und erklärbare Begründungen als Filter nutzen; aktuelle Forschung zu Kursrecommendations kombiniert ebenfalls Kandidatenmodelle mit graphbasierten Constraints und Erklärungen.
+
+Antwortgenerierung
+
+Der ResponsePlanner sollte vor der Formulierung ein prüfbares Objekt erzeugen:
+
+{
+  "answerMode": "recommendation",
+  "directAnswer": "...",
+  "selectedEvidenceIds": ["course-1", "course-2"],
+  "reasons": [
+    {"courseId": "course-1", "evidence": ["skill:GenAI", "level:beginner"]}
+  ],
+  "uncertainties": [],
+  "followUp": "..."
+}
+
+
+Grounding-Policy:
+
+Kursnamen, Verfügbarkeit, Dauer, Links und Skill-Zuordnung ausschließlich aus MCP.
+Allgemeines Lernwissen darf ergänzen, muss sprachlich getrennt sein.
+Keine Plattformdetails aus Modellwissen ergänzen.
+Antworttiefe wird aus Intent und Komplexität abgeleitet: einfache Navigation kurz, Vergleich/Empfehlung ausführlicher.
+Pro Empfehlung erklären: warum passend, für welches Niveau, welche Einschränkung.
+9. Evaluationsrahmen
+
+Microsoft trennt End-to-End-Evaluation von Prozessmetriken und bietet unter anderem Intent Resolution, Tool Selection, Tool Input Accuracy, Tool Output Utilization und Tool Call Success.
+
+Ebene	MetrikenIntent	Intent Accuracy, Entity-Type Accuracy, Clarification Accuracy
+Tools	Tool Selection Precision/Recall/F1, Unnecessary Tool Rate
+Query	Empty Query Rate, Schema Validity, Entity Preservation, Rewrite Success
+Retrieval	Recall@5/10, Precision@5, MRR, nDCG@5/10, Zero-Result Rate
+Recommendation	Constraint Violation Rate, Skill Match, Level Fit, Explanation Coverage
+Antwort	Groundedness, Completeness, Relevance, Abstention Correctness
+Dialog	Follow-up Resolution, Context Carry-over, Repetition Rate
+Betrieb	P50/P95-Latenz pro Phase, Retry Rate, Cache Hit Rate, MCP Error Rate
+Nutzer	Helpful Rate, Task Completion, CSAT, Reformulation Rate
+
+Golden-Testgruppen:
+
+leere/Whitespace-Query,
+„KI“, „AI“, „Künstliche Intelligenz“,
+Tippfehler,
+exakte Kurs-ID,
+falscher Entitätstyp,
+mehrere gleichnamige Skills,
+Nulltreffer versus Backendfehler,
+irrelevanter semantischer Treffer,
+Follow-up „der zweite“,
+Authentifizierung fehlt,
+Profile/Cluster/Skill-Verwechslung,
+Antwort zu kurz oder unbegründet.
+10. Priorisierte Roadmap
+P0 – Qualitäts- und Sicherheitsblocker
+query bei Suchtools verpflichtend; Browse-Intents ausschließlich über list_*.
+Unimplementierte Parameter entfernen oder implementieren.
+DivisionId-Mapping in search_profiles korrigieren.
+get_courses_by_tag auf genau einen required Identifier umstellen.
+Typisierte Status-/Fehlerantworten und isError.
+Authorization-Bypass schließen; Scope-Policies ergänzen.
+AgentRouteDecision um typisierte Argumente erweitern.
+Empty-Query-, Auth- und Tool-Contract-Tests als CI-Gates.
+P1 – größter Qualitätsgewinn
+skills.resolve(query, language, topK) einführen.
+search_skills(query, topK) statt kompletter Taxonomie.
+Terminologie-Service mit Aliasen, Akronymen und Tippfehlern.
+Query Builder, Validator und Recovery Controller extrahieren.
+Full-Text-Index über Titel, Summary, Tags, Cluster und Beschreibung.
+Hybrid Search und RRF.ser-Tools
+Relevance-/Constraint-Reranker.
+Response Planner und Evidence Validator.
+Distributed Cache und strukturierte Traces.
+P2 – strategischer Ausbau
+Skill Graph mit requires, covers, related, targetLevel.
+Skill-Gap-basierte Recommendations.
+Einbezug von Fortschritt und Bookmarks nach Datenschutzfreigabe.
+Learning-to-Rank oder Two-Tower-Candidate-Generation erst bei ausreichenden Interaktionsdaten.
+A/B-Tests für Ranking und Antwortstil.
+Modellvergleich auf derselben gehaltenen Testmenge.
+11. Wichtigste Anti-Patterns
+Optionales Suchargument plus separates List-Tool.
+Toolbeschreibung verspricht nicht implementierte Filter.
+null oder leere Liste als universelles Fehlersignal.
+Generischer String als Argument für alle Tools.
+Komplette Taxonomie im LLM-Kontext.
+ClusterName als Skill.
+FirstOrDefault zur Auflösung mehrdeutiger Fachbegriffe.
+„Neueste zuerst“ als Ersatz für Relevanzranking.
+Recommendation direkt aus Suchtreffern.
+Anonymous Objects statt versionierter DTOs.
+Authentifizierung anhand der Header-Existenz.
+Prozesslokaler Cache ohne instanzübergreifende Invalidierung.
+Antwortgenerierung ohne vorherigen Evidenz- und Vollständigkeitsplan.
+Abschließende Empfehlung
+
+Die bestehende Lösung sollte nicht neu gebaut, sondern entlang klarer Qualitätsgrenzen refaktoriert werden:
+
+LLM versteht → Policy begrenzt → Query wird konstruiert und validiert → MCP liefert typisierte Evidenz → Retrieval wird fachlich gerankt → Planner erzeugt grounded Antwort.
+
+Der größte kurzfristige Hebel ist nicht ein besseres Prompt, sondern ein enger, korrekter und maschinenvalidierbarer Vertrag zwischen Router und MCP. Danach liefert eine Kombination aus Terminologieauflösung, Hybrid Retrieval und fachlichem Reranking den größten nachhaltigen Qualitätsgewinn.
+
+12. Konkreter Änderungs- und Verbesserungsplan
+
+Ziel
+
+Der Agent soll für jede Anfrage entweder eine passende, evidenzbasierte Antwort liefern oder eindeutig erklären, warum eine Rückfrage, Anmeldung oder Fehlermeldung erforderlich ist. Suchtreffer dürfen nicht nur technisch vorhanden, sondern müssen fachlich passend und nachvollziehbar sein.
+
+14. Nicht priorisierte Maßnahmen
+
+- Ein Modellwechsel.
+- Fine-Tuning oder Toolformer-Training.
+- Vollständiger Knowledge Graph ohne konkreten Produkt-Use-Case.
+- Umbenennung aller Tools ohne Vertrags- oder Qualitätsgewinn.
+- Vollständige Extraktion der Partial-Klassen ohne vorherige funktionale Tests.
+
+Diese Maßnahmen können später sinnvoll sein, erhöhen aber kurzfristig die Antwortqualität nicht so stark wie korrekte Authentifizierung, typisierte Fehler, eindeutige Entitätsauflösung und relevanzbasierte Suche.
+
+15. Erfolgskriterien nach Abschluss der Hochprioritätsphasen
+
+- Keine unautorisierten erfolgreichen MCP-Aufrufe.
+- Keine Suchanfrage mit leerem oder nur aus Whitespace bestehendem Query, sofern kein Browse-Intent vorliegt.
+- Keine Ausgabe eines fachlichen Treffers bei `NotFound`, `Unauthorized` oder Backend-Fehler.
+- Mindestens 95 Prozent korrekte Toolauswahl in den Golden Dialogs.
+- Mindestens 90 Prozent korrekte Entitätsauflösung bei eindeutigen IDs und Titeln.
+- Messbare Verbesserung von Precision@5 und Follow-up-Erfolgsrate gegenüber der Baseline.
+- Jede Recommendation ist auf mindestens eine konkrete Evidence-Beziehung zurückführbar.

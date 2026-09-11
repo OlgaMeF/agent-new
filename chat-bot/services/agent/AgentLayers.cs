@@ -1,9 +1,20 @@
 namespace MB.ComTools.Apps.Content.Services.Agent;
 
 /// <summary>
-/// Logical layer contracts. Today <see cref="AgentService"/> implements all three
-/// internally; these interfaces document the intended boundaries for extraction.
+/// Logical layer contracts. Today <see cref="MB.ComTools.Apps.Content.Services.AgentService"/>
+/// implements all three internally as <c>partial</c> files; these interfaces document
+/// the intended boundaries for a later DI extraction.
 /// </summary>
+/// <remarks>
+/// Mapping to current partials:
+/// <list type="bullet">
+/// <item><see cref="IAgentRouter"/> → <c>AgentService.Reasoning.cs</c> + <c>AgentService.Planning.cs</c></item>
+/// <item><see cref="IAgentExecutor"/> → <c>AgentService.Execution.cs</c> + <c>AgentService.McpExtraction.cs</c></item>
+/// <item><see cref="IAgentRenderer"/> → <c>AgentService.Response.cs</c></item>
+/// <item>Orchestration / perception / state → <c>AgentService.cs</c> + <c>AgentService.State.cs</c></item>
+/// <item>Shared types → <c>AgentService.Models.cs</c></item>
+/// </list>
+/// </remarks>
 public interface IAgentRouter
 {
     /// <summary>Maps a user message + conversation snapshot into an execution plan intent and tool calls.</summary>
