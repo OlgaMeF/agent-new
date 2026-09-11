@@ -44,9 +44,7 @@ public class McpUserTools
         if (userId == null)
         {
             _logger.LogWarning("get_my_progress called without authenticated user");
-            throw new McpToolException(
-                "unauthorized",
-                "Authentication required for progress.");
+            throw new InvalidOperationException("[unauthorized] Authentication required for progress.");
         }
 
         _logger.LogInformation("Loading progress for authenticated user");
@@ -128,9 +126,7 @@ public class McpUserTools
         if (userId == null)
         {
             _logger.LogWarning("get_my_bookmarks called without authenticated user");
-            throw new McpToolException(
-                "unauthorized",
-                "Authentication required for bookmarks.");
+            throw new InvalidOperationException("[unauthorized] Authentication required for bookmarks.");
         }
 
         _logger.LogInformation("Loading bookmarks for authenticated user");
@@ -243,9 +239,7 @@ public class McpUserTools
         if (!string.IsNullOrWhiteSpace(_options.UserToolsScope)
             && !HasScope(user, _options.UserToolsScope))
         {
-            throw new McpToolException(
-                "forbidden",
-                "The token lacks the required user-tools scope.");
+            throw new InvalidOperationException("[forbidden] The token lacks the required user-tools scope.");
         }
 
         // Try "sub" claim first (OIDC standard), then NameIdentifier

@@ -171,9 +171,7 @@ public class McpCourseTools
                 if (course == null)
                 {
                     _logger.LogWarning("Course with ID {CourseId} not found or not published", courseId);
-                    throw new McpToolException(
-                        "not_found",
-                        $"Course '{courseId}' was not found.");
+                    throw new InvalidOperationException($"[not_found] Course '{courseId}' was not found.");
                 }
 
                 var httpContext = _httpContextAccessor.HttpContext;
@@ -214,9 +212,7 @@ public class McpCourseTools
                 if (string.IsNullOrWhiteSpace(tagId))
                 {
                     _logger.LogWarning("Tag not found for name {TagName} and language {Language}", tagName, language);
-                    throw new McpToolException(
-                        "not_found",
-                        $"Tag '{tagName}' was not found.");
+                    throw new InvalidOperationException($"[not_found] Tag '{tagName}' was not found.");
                 }
 
                 // Find all course IDs linked to this tag via two patterns:

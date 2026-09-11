@@ -195,9 +195,7 @@ public class McpProfileTools
                 if (profile is null)
                 {
                     _logger.LogInformation("get_profile_skills: no profile found for query={Query}", query);
-                    throw new McpToolException(
-                        "not_found",
-                        $"Profile '{query}' was not found.");
+                    throw new InvalidOperationException($"[not_found] Profile '{query}' was not found.");
                 }
 
                 var assignments = await _context.LearnProfileCourseAssignments
@@ -292,7 +290,7 @@ public class McpProfileTools
                 {
                     0 => null,
                     1 => exactMatches[0],
-                    _ => throw new McpToolException(
+                    _ => throw new InvalidOperationException(
                         "ambiguous",
                         $"Skill '{skillName}' matches multiple tags: "
                         + string.Join(", ", exactMatches.Select(t => t.BaseEntryId)))
@@ -310,7 +308,7 @@ public class McpProfileTools
                     {
                         0 => null,
                         1 => partialMatches[0],
-                        _ => throw new McpToolException(
+                        _ => throw new InvalidOperationException(
                             "ambiguous",
                             $"Skill '{skillName}' matches multiple tags: "
                             + string.Join(", ", partialMatches.Select(t => t.BaseEntryId)))
@@ -320,9 +318,7 @@ public class McpProfileTools
                 if (tag is null)
                 {
                     _logger.LogInformation("get_skill: no skill/category found for query={Query}", skillName);
-                    throw new McpToolException(
-                        "not_found",
-                        $"Skill '{skillName}' was not found.");
+                    throw new InvalidOperationException($"[not_found] Skill '{skillName}' was not found.");
                 }
 
                 var translations = tag.Translations
@@ -371,9 +367,7 @@ public class McpProfileTools
                 if (profile == null)
                 {
                     _logger.LogWarning("Profile with ID {ProfileId} not found or not published", profileId);
-                    throw new McpToolException(
-                        "not_found",
-                        $"Profile '{profileId}' was not found.");
+                    throw new InvalidOperationException($"[not_found] Profile '{profileId}' was not found.");
                 }
 
                 var httpContext = _httpContextAccessor.HttpContext;
