@@ -165,9 +165,9 @@ public class McpProfileTools
     }
 
     /// <summary>
-    /// Get skills and grouped course assignments for a learning profile.
+    /// Get course assignments for a learning profile (flat list, no Pflicht/optional split).
     /// </summary>
-    [McpServerTool, Description("Get course assignments for a learning profile, grouped by course cluster. The current data model does not provide a verified profile-skill relation, so clusters are not reported as skills.")]
+    [McpServerTool, Description("Get course assignments for a learning profile as a flat course list with deep links.")]
     public async Task<McpProfileSkillsResponse?> get_profile_skills(
         [Description("Profile name or search term to find the profile.")] string query,
         CancellationToken cancellationToken = default)
@@ -197,6 +197,8 @@ public class McpProfileTools
                     throw new InvalidOperationException($"[not_found] Profile '{query}' was not found.");
                 }
 
+                var httpContext = _httpContextAccessor.HttpContext;
+
                 var assignments = await _context.LearnProfileCourseAssignments
                     .Where(ca => ca.ProfileId == profile.BaseEntryId)
                     .Join(
@@ -211,45 +213,35 @@ public class McpProfileTools
                         x.ca.CourseId,
                         CourseTitle = x.c.Title,
                         x.ca.SortOrder,
-                        CourseClusterName = x.c.ClusterName ?? "Allgemein",
-                        x.c.DurationInHours,
-                        x.c.IsActive
+                        x.c.ClusterName
                     })
                     .ToListAsync(cancellationToken);
 
-                var httpContext = _httpContextAccessor.HttpContext;
-
-                var courseClusters = assignments
-                    .GroupBy(a => a.CourseClusterName, StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(g => g.Key)
-                    .Select(g => new McpProfileCourseClusterGroupDto(
-                        CourseClusterName: g.Key,
-                        RequiredCount: 0,
-                        OptionalCount: 0,
-                        Courses: g.Select(a => new McpProfileCourseDto(
-                            CourseId: a.CourseId,
-                            CourseTitle: a.CourseTitle,
-                            RequirementType: "Assigned",
-                            SortOrder: a.SortOrder,
-                            DeepLink: BuildDeepLink($"/learn-skills/pages/content/{a.CourseId}", httpContext),
-                            CourseClusterName: a.CourseClusterName,
-                            EvidenceSource: "course.cluster"
-                        )).ToList()))
+                var courses = assignments
+                    .Select(a => new McpProfileCourseDto(
+                        CourseId: a.CourseId,
+                        CourseTitle: a.CourseTitle,
+                        RequirementType: "Assigned",
+                        SortOrder: a.SortOrder,
+                        DeepLink: BuildDeepLink($"/learn-skills/pages/content/{a.CourseId}", httpContext),
+                        CourseClusterName: a.ClusterName,
+                        EvidenceSource: "profile.course"))
                     .ToList();
 
                 return new McpProfileSkillsResponse(
                     ProfileId: profile.BaseEntryId,
                     Title: profile.Title,
                     Summary: profile.Summary,
-                    TotalCourses: assignments.Count,
+                    TotalCourses: courses.Count,
                     RequiredCoursesCount: 0,
                     OptionalCoursesCount: 0,
-                    CourseClusters: courseClusters,
+                    Courses: courses,
                     DeepLink: BuildDeepLink($"/learn-skills/profile/view/{profile.BaseEntryId}", httpContext)
                 );
             });
     }
-        /// <summary>
+
+    /// <summary>
     /// Get details for one skill/category tag by ID, German name, English name or translation.
     /// </summary>
     [McpServerTool, Description("Get details for one learning skill or skill category by ID, name, or translated name.")]

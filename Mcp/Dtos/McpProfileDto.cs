@@ -51,13 +51,6 @@ public record McpProfileListResponse(
     DateTimeOffset GeneratedAt
 );
 
-public record McpProfileCourseClusterGroupDto(
-    string CourseClusterName,
-    int RequiredCount,
-    int OptionalCount,
-    IReadOnlyList<McpProfileCourseDto> Courses
-);
-
 public record McpProfileSkillsResponse(
     string ProfileId,
     string Title,
@@ -65,7 +58,7 @@ public record McpProfileSkillsResponse(
     int TotalCourses,
     int RequiredCoursesCount,
     int OptionalCoursesCount,
-    IReadOnlyList<McpProfileCourseClusterGroupDto> CourseClusters,
+    IReadOnlyList<McpProfileCourseDto> Courses,
     string DeepLink
 );
 
