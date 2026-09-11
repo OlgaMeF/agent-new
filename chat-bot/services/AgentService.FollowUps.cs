@@ -109,9 +109,16 @@ public partial class AgentService
                     StringComparer.OrdinalIgnoreCase)
                 {
                     ["currentProfile"] = currentProfile,
-                    ["targetProfile"] = targetProfile
+                    ["targetProfile"] = targetProfile,
+                    ["topic"] = targetProfile
                 },
-                ToolCalls: []);
+                ToolCalls:
+                [
+                    new ToolCallRequest(
+                        "get_profile_skills",
+                        targetProfile,
+                        ReferenceType.None)
+                ]);
 
             return true;
         }
@@ -164,7 +171,8 @@ public partial class AgentService
         }
 
         if (TryExtractNamedCourseTitle(message, out var namedCourse)
-            && !IsOrdinalPhrase(namedCourse))
+            && !IsOrdinalPhrase(namedCourse)
+            && !IsWeakCourseTitleToken(namedCourse))
         {
             reasoning = new ReasoningResult(
                 Intent: AgentIntent.CourseDetails,
@@ -857,6 +865,20 @@ public partial class AgentService
             || normalized.Length < 4;
     }
 
+    private static bool IsWeakCourseTitleToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return true;
+        }
+
+        var text = value.Trim().ToLowerInvariant();
+
+        return text is "den" or "die" or "das" or "der" or "dem" or "des"
+            or "the" or "a" or "an" or "this" or "that" or "it"
+            or "kurs" or "course" or "einen" or "einem" or "einer";
+    }
+
     private static bool IsOrdinalPhrase(string? value)
     {
         if (string.IsNullOrWhiteSpace(value))
@@ -1091,7 +1113,8 @@ public partial class AgentService
 
             var raw = match.Groups["title"].Value.Trim().Trim('"', '\'', '„', '“');
             raw = Regex.Replace(raw, @"\s+(?:kurs|course)\s*$", string.Empty, RegexOptions.IgnoreCase);
-            if (raw.Length < 3)
+            // Reject articles / ordinals: "Erzähl mir mehr über den Kurs" → "den".
+            if (raw.Length < 4 || IsWeakCourseTitleToken(raw) || IsOrdinalPhrase(raw))
             {
                 continue;
             }
@@ -1330,14 +1353,23 @@ public partial class AgentService
 
         var match = Regex.Match(
             message.Trim(),
-            @"\bich\s+bin\s+(?<current>.+?)(?:,|\.|\s+und\s+)\s*ich\s+möchte\s+(?<target>.+?)\s+werden\b",
+            @"\bich\s+bin\s+(?<current>.+?)(?:,|\.|\s+und\s+)\s*(?:ich\s+)?möchte\s+(?<target>.+?)\s+werden\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        if (!match.Success)
+        {
+            // Also accept "will ... werden" / "möchte gerne ... werden".
+            match = Regex.Match(
+                message.Trim(),
+                @"\bich\s+bin\s+(?<current>.+?)(?:,|\.|\s+und\s+)\s*(?:ich\s+)?(?:möchte|will|möchte\s+gerne)\s+(?<target>.+?)\s+werden\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        }
 
         if (!match.Success)
         {
             match = Regex.Match(
                 message.Trim(),
-                @"\bi\s+am\s+(?<current>.+?)(?:,|\.|\s+and\s+)\s*i\s+want\s+to\s+become\s+(?<target>.+?)\b",
+                @"\bi\s+am\s+(?<current>.+?)(?:,|\.|\s+and\s+)\s*i\s+(?:want|would\s+like)\s+to\s+become\s+(?:a\s+|an\s+)?(?<target>.+?)\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         }
 

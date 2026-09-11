@@ -49,58 +49,62 @@ public partial class AgentService
         ConversationState conversation,
         CancellationToken cancellationToken)
     {
-        var messages = new List<GenAiChatMessage>
-        {
-            new("system", BuildRouterSystemPrompt()),
-            new("user", BuildRouterUserMessage(request, conversation))
-        };
-
-        var tools = new[] { BuildRouteRequestTool() };
-
-        // 1) Forced native call to route_request (no free-form JSON in content).
-        var completion = await _genAiService.CompleteAsync(
-            messages,
-            tools,
-            toolChoice: RouteRequestToolName,
-            cancellationToken);
-
         var path = "none";
         ReasoningResult? reasoning = null;
+        GenAiCompletionResult? completion = null;
 
-        if (completion is not null
-            && TryParseReasoningFromCompletion(
-                completion,
-                conversation.Language,
-                out var parsed,
-                out path))
+        // Native tool calling only when the gateway accepts tool_choice.
+        // Llama deployments that return 422 capability_not_supported skip this
+        // and go straight to JSON-in-content (avoids two failed round-trips).
+        if (_genAiService.SupportsToolChoice)
         {
-            reasoning = parsed;
-        }
+            var messages = new List<GenAiChatMessage>
+            {
+                new("system", BuildRouterSystemPrompt()),
+                new("user", BuildRouterUserMessage(request, conversation))
+            };
 
-        if (reasoning is null)
-        {
-            // Some CF/Ollama gateways ignore named tool_choice or return broken
-            // arguments; retry with auto before leaving native tool calling.
+            var tools = new[] { BuildRouteRequestTool() };
+
             completion = await _genAiService.CompleteAsync(
                 messages,
                 tools,
-                toolChoice: "auto",
+                toolChoice: RouteRequestToolName,
                 cancellationToken);
 
             if (completion is not null
                 && TryParseReasoningFromCompletion(
                     completion,
                     conversation.Language,
-                    out parsed,
+                    out var parsed,
                     out path))
             {
                 reasoning = parsed;
-                path = $"auto:{path}";
+            }
+
+            // Retry with auto only while tool_choice is still supported.
+            if (reasoning is null && _genAiService.SupportsToolChoice)
+            {
+                completion = await _genAiService.CompleteAsync(
+                    messages,
+                    tools,
+                    toolChoice: "auto",
+                    cancellationToken);
+
+                if (completion is not null
+                    && TryParseReasoningFromCompletion(
+                        completion,
+                        conversation.Language,
+                        out parsed,
+                        out path))
+                {
+                    reasoning = parsed;
+                    path = $"auto:{path}";
+                }
             }
         }
 
-        // 2) Llama 3.1 often emits JSON in content when tool schemas are rejected.
-        // A dedicated content-JSON pass is more reliable than clarify.
+        // JSON-in-content: primary path when tool_choice is unsupported, fallback otherwise.
         if (reasoning is null)
         {
             var jsonCompletion = await _genAiService.CompleteAsync(
@@ -117,10 +121,12 @@ public partial class AgentService
             if (jsonCompletion is not null
                 && !string.IsNullOrWhiteSpace(jsonCompletion.Content)
                 && TryExtractFirstJsonObject(jsonCompletion.Content, out var json)
-                && TryParseReasoning(json, out parsed, conversation.Language))
+                && TryParseReasoning(json, out var parsed, conversation.Language))
             {
                 reasoning = parsed;
-                path = "content_json_retry";
+                path = _genAiService.SupportsToolChoice
+                    ? "content_json_retry"
+                    : "content_json_primary";
             }
         }
 
@@ -354,6 +360,11 @@ public partial class AgentService
         → intent=course_search, language=de, slots.topic="Python",
           toolCalls=[{tool:"search_courses", query:"Python", ref:"none"}]
 
+        User: "Ich bin Softwareentwickler und möchte Product Owner werden"
+        → intent=learning_recommendation, language=de,
+          slots.currentProfile="Softwareentwickler", slots.targetProfile="Product Owner",
+          toolCalls=[{tool:"get_profile_skills", query:"Product Owner", ref:"none"}]
+
         User: "Was kannst du?"
         → intent=capabilities, language=de, toolCalls=[]
         """;
@@ -381,11 +392,16 @@ public partial class AgentService
 
         Rules:
         - Current user message decides intent.
+        - Role transition "Ich bin X und möchte Y werden" → intent=learning_recommendation,
+          slots.currentProfile=X, slots.targetProfile=Y,
+          toolCalls=[{tool:"get_profile_skills", query:Y, ref:"none"}] (and optionally one for X).
         - If the user named a topic/subject, query AND slots.topic MUST contain it (never empty).
         - Empty toolCalls only for capabilities, smalltalk, out_of_scope, clarify.
         - Valid tools: search_courses, get_course, get_courses_by_tag, search_skills, get_skill, search_profiles, get_profile, get_profile_skills, get_divisions, search_collections, get_my_bookmarks, get_my_progress.
         - Example: "Welche Kurse gibt es zu Python?" →
           {"intent":"course_search","language":"de","slots":{"topic":"Python"},"toolCalls":[{"tool":"search_courses","query":"Python","ref":"none"}]}
+        - Example: "Ich bin Softwareentwickler und möchte Product Owner werden." →
+          {"intent":"learning_recommendation","language":"de","slots":{"currentProfile":"Softwareentwickler","targetProfile":"Product Owner"},"toolCalls":[{"tool":"get_profile_skills","query":"Product Owner","ref":"none"}]}
         """;
     }
 

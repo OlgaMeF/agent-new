@@ -213,6 +213,10 @@ public partial class AgentService
 
             ReasoningResult reasoning;
 
+            _logger.LogInformation(
+                "USER_MESSAGE={Message}",
+                perception.OriginalMessage);
+
             if (TryResolveFollowUp(
                     perception.OriginalMessage,
                     conversation,
@@ -227,10 +231,6 @@ public partial class AgentService
             }
             else
             {
-                _logger.LogInformation(
-    "USER_MESSAGE={Message}",
-    perception.OriginalMessage);
-
                 reasoning = await AnalyzeMessageAsync(
                     perception,
                     conversation,

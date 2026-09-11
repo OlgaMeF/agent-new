@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Threading;
 
 namespace MB.ComTools.Apps.Content.Services;
 
@@ -21,6 +22,13 @@ public class GenAiService
     private readonly ILogger<GenAiService> _logger;
     private string? _cachedModel;
 
+    /// <summary>
+    /// Some Llama deployments reject <c>tool_choice</c> with HTTP 422
+    /// (<c>capability_not_supported</c>). After the first failure we skip native
+    /// tool calling and use JSON-in-content routing instead.
+    /// </summary>
+    private int _toolChoiceUnsupported;
+
     public GenAiService(
         HttpClient httpClient,
         IConfiguration configuration,
@@ -30,6 +38,12 @@ public class GenAiService
         _configuration = configuration;
         _logger = logger;
     }
+
+    /// <summary>
+    /// False once the gateway reported that <c>tool_choice</c> is not supported.
+    /// </summary>
+    public bool SupportsToolChoice =>
+        Interlocked.CompareExchange(ref _toolChoiceUnsupported, 0, 0) == 0;
 
     /// <summary>
     /// Plain text completion. Used for answer prose when no tools are needed.
@@ -126,6 +140,15 @@ public class GenAiService
 
             if (!response.IsSuccessStatusCode)
             {
+                if (IsToolChoiceUnsupportedError(response.StatusCode, responseBody))
+                {
+                    if (Interlocked.Exchange(ref _toolChoiceUnsupported, 1) == 0)
+                    {
+                        _logger.LogWarning(
+                            "GenAI model does not support tool_choice; switching to JSON-content routing.");
+                    }
+                }
+
                 _logger.LogWarning(
                     "GenAI completion failed status={StatusCode} bodyLength={Length}",
                     (int)response.StatusCode,
@@ -204,7 +227,8 @@ public class GenAiService
         // malformed tool JSON with Llama 3.1-class models.
         const double temperature = 0;
 
-        if (tools is null || tools.Count == 0)
+        // Gateway rejected tool_choice earlier — never send tools/tool_choice again.
+        if (!SupportsToolChoice || tools is null || tools.Count == 0)
         {
             return new
             {
@@ -227,8 +251,6 @@ public class GenAiService
         }).ToArray();
 
         // tool_choice: "auto" | "none" | "required" | { type, function: { name } }
-        // Must be sent — without it Llama often replies with prose/JSON in content
-        // instead of calling route_request, which yields empty queries downstream.
         object resolvedChoice = string.IsNullOrWhiteSpace(toolChoice)
             ? "auto"
             : toolChoice.Trim().ToLowerInvariant() switch
@@ -250,6 +272,20 @@ public class GenAiService
             temperature,
             stream = false
         };
+    }
+
+    private static bool IsToolChoiceUnsupportedError(
+        System.Net.HttpStatusCode statusCode,
+        string? responseBody)
+    {
+        if ((int)statusCode != 422 || string.IsNullOrWhiteSpace(responseBody))
+        {
+            return false;
+        }
+
+        return responseBody.Contains("tool_choice", StringComparison.OrdinalIgnoreCase)
+            && (responseBody.Contains("capability_not_supported", StringComparison.OrdinalIgnoreCase)
+                || responseBody.Contains("does not support", StringComparison.OrdinalIgnoreCase));
     }
 
     private static GenAiCompletionResult? ParseCompletion(string responseBody)
