@@ -13,9 +13,6 @@ public class McpOptions
     /// <summary>Optional audience for MCP bearer tokens. Defaults to the OIDC client id.</summary>
     public string BearerAudience { get; set; } = string.Empty;
 
-    /// <summary>Optional scope required by personal user-context tools.</summary>
-    public string UserToolsScope { get; set; } = string.Empty;
-
     /// <summary>Rate limit: max requests per minute per API key.</summary>
     public int RateLimitPerMinute { get; set; } = 200;
 
