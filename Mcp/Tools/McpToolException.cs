@@ -1,4 +1,4 @@
-namespace MB.ComTools.Apps.Setup.Mcp;
+namespace MB.ComTools.Apps.Setup.Mcp.Tools;
 
 /// <summary>Machine-readable failure raised by an MCP tool.</summary>
 public sealed class McpToolException : Exception
