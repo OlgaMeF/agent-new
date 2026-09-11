@@ -5,7 +5,6 @@ using System.Collections.Concurrent;
 using System.Security.Claims;
 using System.Runtime.CompilerServices;
 using MB.ComTools.Apps.Content.Services.Agent;
-using MB.ComTools.Apps.Setup.Mcp.Dtos;
 
 namespace MB.ComTools.Apps.Content.Services;
 
